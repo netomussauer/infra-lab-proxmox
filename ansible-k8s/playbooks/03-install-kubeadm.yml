@@ -1,0 +1,70 @@
+---
+# ─────────────────────────────────────────────────────────
+# 03-install-kubeadm.yml
+# Instala kubeadm, kubelet e kubectl v1.29 em todos os nós:
+#   - Adiciona repositório oficial pkgs.k8s.io
+#   - Instala e marca pacotes como hold (evita upgrade acidental)
+#   - Habilita kubelet
+# ─────────────────────────────────────────────────────────
+
+- name: Instalar kubeadm, kubelet e kubectl
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Criar diretório para keyrings Kubernetes
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Baixar chave GPG do repositório Kubernetes
+      ansible.builtin.get_url:
+        url: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/Release.key"
+        dest: "{{ kubernetes_apt_keyring }}"
+        mode: "0644"
+        force: false
+
+    - name: Adicionar repositório Kubernetes ao APT
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [signed-by={{ kubernetes_apt_keyring }}]
+          {{ kubernetes_apt_repo }} /
+        filename: kubernetes
+        state: present
+        update_cache: true
+
+    - name: Instalar kubeadm, kubelet e kubectl
+      ansible.builtin.apt:
+        name:
+          - "kubelet"
+          - "kubeadm"
+          - "kubectl"
+        state: present
+        update_cache: false
+
+    - name: Marcar pacotes Kubernetes como hold (evitar upgrade automático)
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+
+    - name: Habilitar e iniciar kubelet
+      ansible.builtin.systemd:
+        name: kubelet
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Verificar versão do kubeadm instalada
+      ansible.builtin.command: kubeadm version -o short
+      register: kubeadm_ver
+      changed_when: false
+
+    - name: Exibir versão do kubeadm
+      ansible.builtin.debug:
+        msg: "kubeadm instalado: {{ kubeadm_ver.stdout }}"

@@ -1,0 +1,77 @@
+---
+# ─────────────────────────────────────────────────────────
+# 05-join-workers.yml
+# Ingresa os nós worker no cluster Kubernetes:
+#   - Lê o comando kubeadm join do master
+#   - Executa o join em cada worker
+#   - Aguarda os workers ficarem Ready
+# ─────────────────────────────────────────────────────────
+
+- name: Obter comando join do master
+  hosts: masters
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ler comando kubeadm join salvo no master
+      ansible.builtin.slurp:
+        src: "{{ kubeadm_join_command_file }}"
+      register: join_command_b64
+
+    - name: Registrar comando join como fact global
+      ansible.builtin.set_fact:
+        kubeadm_join: "{{ join_command_b64['content'] | b64decode | trim }}"
+
+- name: Ingressar workers no cluster
+  hosts: workers
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Verificar se o worker já está no cluster
+      ansible.builtin.stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf
+
+    - name: Executar kubeadm join no worker
+      ansible.builtin.command: "{{ hostvars[groups['masters'][0]]['kubeadm_join'] }}"
+      register: join_result
+      when: not kubelet_conf.stat.exists
+      changed_when: join_result.rc == 0
+
+    - name: Habilitar e iniciar kubelet no worker
+      ansible.builtin.systemd:
+        name: kubelet
+        enabled: true
+        state: started
+        daemon_reload: true
+
+- name: Verificar workers no master
+  hosts: masters
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Aguardar todos os workers ficarem Ready
+      ansible.builtin.command: >
+        kubectl get node {{ item }}
+        --output=jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+      environment:
+        KUBECONFIG: "/home/{{ ansible_user }}/.kube/config"
+      register: worker_ready
+      until: worker_ready.stdout == "True"
+      retries: 20
+      delay: 15
+      changed_when: false
+      loop: "{{ groups['workers'] }}"
+
+    - name: Exibir status final do cluster
+      ansible.builtin.command: kubectl get nodes -o wide
+      environment:
+        KUBECONFIG: "/home/{{ ansible_user }}/.kube/config"
+      register: final_status
+      changed_when: false
+
+    - name: Mostrar cluster completo
+      ansible.builtin.debug:
+        msg: "{{ final_status.stdout_lines }}"

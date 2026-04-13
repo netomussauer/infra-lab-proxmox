@@ -1,0 +1,36 @@
+---
+# ─────────────────────────────────────────────────────────
+# site.yml — Playbook principal
+# Orquestra a instalação completa do cluster Kubernetes.
+# Execute sempre com o inventário gerado pelo generate_inventory.sh.
+#
+# Uso:
+#   ansible-playbook -i inventory/hosts.yml site.yml
+#
+# Para executar apenas um subset de tarefas use tags:
+#   ansible-playbook -i inventory/hosts.yml site.yml --tags prepare
+#   ansible-playbook -i inventory/hosts.yml site.yml --tags containerd
+#   ansible-playbook -i inventory/hosts.yml site.yml --tags kubeadm
+#   ansible-playbook -i inventory/hosts.yml site.yml --tags master
+#   ansible-playbook -i inventory/hosts.yml site.yml --tags workers
+# ─────────────────────────────────────────────────────────
+
+- name: "01 — Preparar todos os nós"
+  import_playbook: playbooks/01-prepare-nodes.yml
+  tags: [prepare, all_nodes]
+
+- name: "02 — Instalar containerd em todos os nós"
+  import_playbook: playbooks/02-install-containerd.yml
+  tags: [containerd, all_nodes]
+
+- name: "03 — Instalar kubeadm, kubelet e kubectl"
+  import_playbook: playbooks/03-install-kubeadm.yml
+  tags: [kubeadm, all_nodes]
+
+- name: "04 — Inicializar o nó master"
+  import_playbook: playbooks/04-init-master.yml
+  tags: [master]
+
+- name: "05 — Ingressar workers no cluster"
+  import_playbook: playbooks/05-join-workers.yml
+  tags: [workers]

@@ -1,0 +1,44 @@
+# ── Terraform ────────────────────────────────────────────
+terraform-proxmox/.terraform/
+terraform-proxmox/.terraform.lock.hcl
+terraform-proxmox/terraform.tfstate
+terraform-proxmox/terraform.tfstate.backup
+terraform-proxmox/terraform.tfstate.d/
+terraform-proxmox/*.tfplan
+terraform-proxmox/tfplan.binary
+terraform-proxmox/crash.log
+terraform-proxmox/override.tf
+terraform-proxmox/override.tf.json
+terraform-proxmox/*_override.tf
+terraform-proxmox/*_override.tf.json
+
+# NUNCA versionar — contém credenciais reais
+terraform-proxmox/terraform.tfvars
+
+# ── Ansible ───────────────────────────────────────────────
+# Inventário gerado dinamicamente (sempre regenerar via script)
+ansible-k8s/inventory/hosts.yml
+ansible-k8s/*.retry
+
+# Cache de facts
+/tmp/ansible_facts_cache/
+
+# ── Segredos e ambiente ───────────────────────────────────
+.env
+.env.*
+*.env
+~/.env.proxmox
+
+# ── Chaves SSH ───────────────────────────────────────────
+*.pem
+*.key
+id_rsa
+id_ed25519
+id_ed25519_proxmox
+
+# ── Sistema ───────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~

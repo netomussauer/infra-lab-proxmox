@@ -1,0 +1,90 @@
+---
+# ─────────────────────────────────────────────────────────
+# 02-install-containerd.yml
+# Instala e configura o containerd como CRI do Kubernetes:
+#   - Adiciona repositório Docker (fonte do containerd)
+#   - Instala containerd.io
+#   - Gera configuração padrão
+#   - Habilita SystemdCgroup = true (obrigatório para kubeadm)
+# ─────────────────────────────────────────────────────────
+
+- name: Instalar e configurar containerd
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Criar diretório para keyrings APT
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Baixar chave GPG do repositório Docker
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+        force: false
+
+    - name: Adicionar repositório Docker ao APT
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+          https://download.docker.com/linux/ubuntu
+          {{ ansible_distribution_release }} stable
+        filename: docker
+        state: present
+        update_cache: true
+
+    - name: Instalar containerd.io
+      ansible.builtin.apt:
+        name: "containerd.io={{ containerd_version }}"
+        state: present
+        update_cache: false
+
+    - name: Criar diretório de configuração do containerd
+      ansible.builtin.file:
+        path: /etc/containerd
+        state: directory
+        mode: "0755"
+
+    - name: Gerar configuração padrão do containerd
+      ansible.builtin.shell:
+        cmd: containerd config default > {{ containerd_config_file }}
+      args:
+        creates: "{{ containerd_config_file }}"
+
+    - name: Habilitar SystemdCgroup no containerd (obrigatório para kubeadm)
+      ansible.builtin.replace:
+        path: "{{ containerd_config_file }}"
+        regexp: '(\s+SystemdCgroup\s*=\s*)false'
+        replace: '\1true'
+      notify: Reiniciar containerd
+
+    - name: Garantir que sandbox_image usa pause correto para k8s 1.29
+      ansible.builtin.replace:
+        path: "{{ containerd_config_file }}"
+        regexp: 'sandbox_image = ".*"'
+        replace: 'sandbox_image = "registry.k8s.io/pause:3.9"'
+      notify: Reiniciar containerd
+
+    - name: Habilitar e iniciar containerd
+      ansible.builtin.systemd:
+        name: containerd
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Verificar que containerd está ativo
+      ansible.builtin.command: systemctl is-active containerd
+      register: containerd_status
+      changed_when: false
+      failed_when: containerd_status.stdout != "active"
+
+  handlers:
+    - name: Reiniciar containerd
+      ansible.builtin.systemd:
+        name: containerd
+        state: restarted
+        daemon_reload: true

@@ -1,0 +1,98 @@
+---
+# ─────────────────────────────────────────────────────────
+# 01-prepare-nodes.yml
+# Prepara todos os nós para receber o Kubernetes:
+#   - Desabilita swap (requisito do kubelet)
+#   - Carrega kernel modules necessários (overlay, br_netfilter)
+#   - Aplica parâmetros sysctl
+#   - Instala dependências base
+# ─────────────────────────────────────────────────────────
+
+- name: Preparar nós para Kubernetes
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Atualizar cache APT
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Instalar pacotes base necessários
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - software-properties-common
+          - python3-pip
+        state: present
+
+    - name: Desabilitar swap (imediatamente)
+      ansible.builtin.command: swapoff -a
+      changed_when: false
+
+    - name: Remover swap do /etc/fstab (persistente)
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([^#].*\sswap\s.*)$'
+        replace: '# \1'
+
+    - name: Garantir que swap está desativado após reboot
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/system/disable-swap.service
+        create: true
+        mode: "0644"
+        line: "{{ item }}"
+      loop:
+        - "[Unit]"
+        - "Description=Disable swap for Kubernetes"
+        - "After=local-fs.target"
+        - "[Service]"
+        - "Type=oneshot"
+        - "ExecStart=/sbin/swapoff -a"
+        - "RemainAfterExit=yes"
+        - "[Install]"
+        - "WantedBy=multi-user.target"
+
+    - name: Habilitar serviço de desativação de swap
+      ansible.builtin.systemd:
+        name: disable-swap
+        enabled: true
+        daemon_reload: true
+
+    - name: Carregar kernel modules necessários
+      community.general.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ k8s_kernel_modules }}"
+
+    - name: Persistir kernel modules no boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/k8s.conf
+        mode: "0644"
+        content: |
+          overlay
+          br_netfilter
+
+    - name: Aplicar parâmetros sysctl para Kubernetes
+      ansible.posix.sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        sysctl_file: /etc/sysctl.d/k8s.conf
+        reload: true
+      loop: "{{ k8s_sysctl_params | dict2items }}"
+
+    - name: Sincronizar relógio via timedatectl
+      ansible.builtin.command: timedatectl set-ntp true
+      changed_when: false
+
+    - name: Verificar que swap está desativado
+      ansible.builtin.command: swapon --show
+      register: swap_status
+      changed_when: false
+      failed_when: swap_status.stdout | length > 0

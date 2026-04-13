@@ -1,0 +1,51 @@
+# ─────────────────────────────────────────────────────────
+# terraform.tfvars.example
+# Copie para terraform.tfvars e preencha com valores reais.
+# NUNCA versione o arquivo terraform.tfvars — ele está no .gitignore.
+# Credenciais sensíveis devem vir de variáveis de ambiente:
+#   source ~/.env.proxmox
+# ─────────────────────────────────────────────────────────
+
+# ── Conexão com o Proxmox ─────────────────────────────────
+proxmox_endpoint     = "https://192.168.1.10:8006"
+proxmox_token_id     = "admin@pve!terraform"
+proxmox_token_secret = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+proxmox_tls_insecure = true
+proxmox_ssh_private_key = "~/.ssh/id_ed25519_proxmox"
+proxmox_node         = "pve-node01"
+
+# ── Identificação ─────────────────────────────────────────
+lab_id       = "lab-k8s-proxmox-01"
+environment  = "dev"
+cluster_name = "k8s"
+
+# ── Template e Storage ────────────────────────────────────
+template_vmid     = 9000
+storage_pool      = "local-lvm"
+cloudinit_storage = "local-lvm"
+
+# ── Rede ──────────────────────────────────────────────────
+network_bridge  = "vmbr1"
+network_gateway = "10.10.0.1"
+network_prefix  = "24"
+dns_servers     = ["8.8.8.8", "1.1.1.1"]
+dns_domain      = "lab.local"
+
+# ── Cloud-Init / SSH ──────────────────────────────────────
+ssh_public_key_file = "~/.ssh/id_ed25519_proxmox.pub"
+vm_user             = "ubuntu"
+
+# ── Nó Master ─────────────────────────────────────────────
+master_vmid      = 200
+master_ip        = "10.10.0.10"
+master_cpu_cores = 2
+master_memory_mb = 4096
+master_disk_gb   = 30
+
+# ── Nós Worker ────────────────────────────────────────────
+worker_count      = 2
+worker_vmid_start = 201
+worker_ips        = ["10.10.0.11", "10.10.0.12"]
+worker_cpu_cores  = 2
+worker_memory_mb  = 4096
+worker_disk_gb    = 50

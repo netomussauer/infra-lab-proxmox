@@ -1,0 +1,42 @@
+---
+# ─────────────────────────────────────────────────────────
+# Variáveis globais do cluster Kubernetes
+# Consumidas por todos os playbooks via group_vars
+# ─────────────────────────────────────────────────────────
+
+# ── Kubernetes ────────────────────────────────────────────
+kubernetes_version: "1.29"
+kubernetes_apt_keyring: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+kubernetes_apt_repo: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/"
+
+# ── Container Runtime (containerd) ────────────────────────
+containerd_version: "1.7.*"
+containerd_config_file: /etc/containerd/config.toml
+containerd_systemd_cgroup: true
+
+# ── Rede do cluster ───────────────────────────────────────
+pod_network_cidr: "192.168.0.0/16"      # Calico default
+service_cidr: "10.96.0.0/12"
+cluster_dns_ip: "10.96.0.10"
+
+# ── Calico CNI ────────────────────────────────────────────
+calico_version: "v3.27.0"
+calico_manifest_url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/calico.yaml"
+
+# ── kubeadm init ─────────────────────────────────────────
+kubeadm_join_command_file: /tmp/kubeadm_join_command.sh
+
+# ── Kernel modules necessários para o Kubernetes ─────────
+k8s_kernel_modules:
+  - overlay
+  - br_netfilter
+
+# ── Parâmetros sysctl para Kubernetes ────────────────────
+k8s_sysctl_params:
+  net.bridge.bridge-nf-call-iptables: 1
+  net.bridge.bridge-nf-call-ip6tables: 1
+  net.ipv4.ip_forward: 1
+
+# ── Identificação do laboratório ─────────────────────────
+lab_id: "lab-k8s-proxmox-01"
+environment: "dev"

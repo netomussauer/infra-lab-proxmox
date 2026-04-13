@@ -1,0 +1,104 @@
+---
+# ─────────────────────────────────────────────────────────
+# 04-init-master.yml
+# Inicializa o control-plane do cluster Kubernetes:
+#   - Executa kubeadm init com pod CIDR para Calico
+#   - Configura kubeconfig para o usuário ansible
+#   - Instala Calico como CNI
+#   - Gera e salva o comando kubeadm join para os workers
+# ─────────────────────────────────────────────────────────
+
+- name: Inicializar o nó master (control-plane)
+  hosts: masters
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Verificar se o cluster já foi inicializado
+      ansible.builtin.stat:
+        path: /etc/kubernetes/admin.conf
+      register: kubeconfig_exists
+
+    - name: Inicializar cluster com kubeadm
+      ansible.builtin.command: >
+        kubeadm init
+        --pod-network-cidr={{ pod_network_cidr }}
+        --service-cidr={{ service_cidr }}
+        --kubernetes-version={{ kubernetes_version }}
+        --ignore-preflight-errors=NumCPU
+      register: kubeadm_init
+      when: not kubeconfig_exists.stat.exists
+      changed_when: kubeadm_init.rc == 0
+
+    - name: Criar diretório .kube para o usuário ansible
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.kube"
+        state: directory
+        mode: "0755"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+
+    - name: Copiar admin.conf para o usuário ansible
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "/home/{{ ansible_user }}/.kube/config"
+        remote_src: true
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0600"
+
+    - name: Aguardar API server ficar disponível
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 6443
+        delay: 10
+        timeout: 120
+
+    - name: Instalar Calico CNI
+      ansible.builtin.command: >
+        kubectl apply -f {{ calico_manifest_url }}
+      environment:
+        KUBECONFIG: "/home/{{ ansible_user }}/.kube/config"
+      become: false
+      register: calico_install
+      changed_when: "'created' in calico_install.stdout or 'configured' in calico_install.stdout"
+
+    - name: Aguardar nó master ficar Ready
+      ansible.builtin.command: >
+        kubectl get node {{ inventory_hostname }}
+        --output=jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+      environment:
+        KUBECONFIG: "/home/{{ ansible_user }}/.kube/config"
+      become: false
+      register: node_ready
+      until: node_ready.stdout == "True"
+      retries: 20
+      delay: 15
+      changed_when: false
+
+    - name: Gerar comando kubeadm join
+      ansible.builtin.command: kubeadm token create --print-join-command
+      register: join_command
+      changed_when: false
+
+    - name: Salvar comando join em arquivo temporário no master
+      ansible.builtin.copy:
+        content: "{{ join_command.stdout }}"
+        dest: "{{ kubeadm_join_command_file }}"
+        mode: "0600"
+
+    - name: Recuperar o comando join como fact para os workers
+      ansible.builtin.set_fact:
+        kubeadm_join: "{{ join_command.stdout }}"
+
+    - name: Exibir status dos nós
+      ansible.builtin.command: kubectl get nodes -o wide
+      environment:
+        KUBECONFIG: "/home/{{ ansible_user }}/.kube/config"
+      become: false
+      register: nodes_status
+      changed_when: false
+
+    - name: Mostrar nós do cluster
+      ansible.builtin.debug:
+        msg: "{{ nodes_status.stdout_lines }}"
