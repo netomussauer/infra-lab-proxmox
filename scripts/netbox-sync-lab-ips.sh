@@ -56,7 +56,7 @@ readonly -a DEFAULT_NETWORKS=(
 )
 
 # Tags padrão para todos os recursos criados
-readonly NB_TAGS='["lab-k8s-proxmox-01", "dev", "auto-discovered"]'
+readonly NB_TAGS='[{"slug":"lab-k8s-proxmox-01"},{"slug":"dev"},{"slug":"auto-discovered"}]'
 
 # =============================================================================
 # ESTADO GLOBAL (contadores — somente leitura após main)
