@@ -114,11 +114,7 @@ ansible-playbook -i inventory/hosts.yml site.yml --tags runner \
 
 ## Changelog
 
-### 2026-04-14 — Stack CI/CD + sub-agente dev-expert-fullcycle
-
-#### Sub-agente (`.claude/agents/`)
-
-- **`dev-expert-fullcycle.md`** — Novo sub-agente Desenvolvedor Sênior Full-Cycle Python & Go. Regras: padrões Effective Go + PEP 8 com Type Hinting; testes obrigatórios (pytest / package testing) com cobertura mínima 80%; consciência de pipeline CI/CD (checklist de impacto ao alterar código); fluxo Conventional Commits + comando de disparo de deploy; otimização via goroutines (Go) e asyncio (Python).
+### 2026-04-14 — Stack CI/CD
 
 #### Terraform (`terraform-cicd/`)
 
