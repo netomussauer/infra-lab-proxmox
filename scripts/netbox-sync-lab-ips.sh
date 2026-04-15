@@ -12,7 +12,7 @@
 # Opções:
 #   -u, --netbox-url URL      URL base do NetBox (padrão: $NETBOX_URL)
 #   -t, --token TOKEN         API Token (padrão: $NETBOX_TOKEN)
-#   -k, --insecure            Ignorar verificação TLS (padrão: false)
+#   -k, --insecure            Ignorar verificação TLS (padrão: true — lab usa cert self-signed)
 #   -n, --dry-run             Não fazer alterações no NetBox
 #   -v, --verbose             Saída detalhada das chamadas API
 #   -s, --skip-networks LIST  Redes a ignorar, separadas por vírgula
@@ -75,7 +75,7 @@ COUNT_ERRORS=0
 
 NETBOX_URL="${NETBOX_URL:-}"
 NETBOX_TOKEN="${NETBOX_TOKEN:-}"
-INSECURE=false
+INSECURE=true   # lab usa certificado SSL self-signed não válido
 DRY_RUN=false
 VERBOSE=false
 PING_TIMEOUT=2
@@ -152,7 +152,7 @@ com o NetBox IPAM de forma idempotente.
 Opções:
   -u, --netbox-url URL      URL base do NetBox (padrão: \$NETBOX_URL)
   -t, --token TOKEN         API Token (padrão: \$NETBOX_TOKEN)
-  -k, --insecure            Ignorar verificação TLS (padrão: false)
+  -k, --insecure            Ignorar verificação TLS (padrão: true — lab usa cert self-signed)
   -n, --dry-run             Não fazer alterações no NetBox
   -v, --verbose             Saída detalhada das chamadas API
   -s, --skip-networks LIST  Redes a ignorar, separadas por vírgula
