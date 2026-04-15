@@ -1,6 +1,6 @@
 # infra-lab-proxmox
 
-Laboratório de infraestrutura híbrida: provisionamento de cluster Kubernetes em Proxmox usando Terraform e Ansible.
+Laboratório de infraestrutura híbrida: provisionamento de cluster Kubernetes e stack CI/CD em Proxmox usando Terraform e Ansible.
 
 ---
 
@@ -11,56 +11,87 @@ infra-lab-proxmox/
 ├── .claudecode.md                        ← Instruções globais para o assistente
 ├── README.md                             ← Este arquivo
 ├── README.infraestructure.md             ← Referência de acesso ao ambiente Proxmox
-├── terraform-proxmox/
+│
+├── terraform-proxmox/                    ← Stack: Cluster Kubernetes
 │   ├── main.tf                           ← Provider bpg/proxmox + recursos de VM
 │   ├── variables.tf                      ← Todas as variáveis de entrada
 │   ├── outputs.tf                        ← Outputs individuais + ansible_vars JSON
-│   └── terraform.tfvars.example          ← Valores de exemplo (não versionar .tfvars real)
-└── ansible-k8s/
-    ├── ansible.cfg                       ← Configuração do Ansible
-    ├── site.yml                          ← Playbook principal (orquestra todos os demais)
-    ├── group_vars/
-    │   └── all.yml                       ← Variáveis globais (versões, CIDRs, sysctl)
+│   └── terraform.tfvars.example
+│
+├── ansible-k8s/                          ← Stack: Cluster Kubernetes
+│   ├── ansible.cfg
+│   ├── site.yml
+│   ├── group_vars/all.yml                ← K8s 1.29, Calico, CIDRs, sysctl
+│   ├── inventory/
+│   │   ├── hosts.yml.tpl
+│   │   └── generate_inventory.sh
+│   └── playbooks/
+│       ├── 01-prepare-nodes.yml
+│       ├── 02-install-containerd.yml
+│       ├── 03-install-kubeadm.yml
+│       ├── 04-init-master.yml
+│       └── 05-join-workers.yml
+│
+├── terraform-cicd/                       ← Stack: CI/CD (Gitea + Registry)
+│   ├── main.tf                           ← 1 VM consolidada (VMID 210)
+│   ├── variables.tf
+│   ├── outputs.tf                        ← gitea_url, registry_url, ansible_vars
+│   └── terraform.tfvars.example
+│
+└── ansible-cicd/                         ← Stack: CI/CD (Gitea + Registry)
+    ├── ansible.cfg
+    ├── site.yml
+    ├── group_vars/all.yml                ← versões, portas, diretórios
     ├── inventory/
-    │   ├── hosts.yml.tpl                 ← Template do inventário
-    │   └── generate_inventory.sh         ← Gera hosts.yml a partir do terraform output
-    └── playbooks/
-        ├── 01-prepare-nodes.yml          ← Swap off, kernel modules, sysctl
-        ├── 02-install-containerd.yml     ← Runtime de containers
-        ├── 03-install-kubeadm.yml        ← kubeadm, kubelet, kubectl v1.29
-        ├── 04-init-master.yml            ← kubeadm init + Calico CNI
-        └── 05-join-workers.yml           ← kubeadm join nos workers
+    │   ├── hosts.yml.tpl
+    │   └── generate_inventory.sh
+    ├── playbooks/
+    │   ├── 01-prepare-node.yml           ← APT, swap off, sysctl, diretórios
+    │   ├── 02-install-docker.yml         ← Docker Engine + Compose plugin
+    │   ├── 03-deploy-stack.yml           ← docker compose (Gitea + Registry)
+    │   └── 04-configure-runner.yml       ← Gitea Act Runner via systemd
+    └── templates/
+        ├── docker-compose.yml.j2         ← memory limits para 4 GB de RAM
+        ├── gitea-app.ini.j2              ← SQLite, Actions habilitado
+        └── registry-config.yml.j2
 ```
 
 ---
 
 ## Fluxo de execução
 
+### Stack Kubernetes
+
 ```bash
-# 1. Preencher variáveis reais
-cp terraform-proxmox/terraform.tfvars.example terraform-proxmox/terraform.tfvars
-# editar terraform.tfvars com IPs, token e credenciais reais
-
-# 2. Carregar credenciais Proxmox
 source ~/.env.proxmox
-
-# 3. Provisionar VMs com Terraform
 cd terraform-proxmox
-terraform init
-terraform plan
-terraform apply
-
-# 4. Gerar inventário Ansible dinamicamente
+cp terraform.tfvars.example terraform.tfvars   # preencher credenciais
+terraform init && terraform plan -out=tfplan.binary && terraform apply tfplan.binary
 cd ../ansible-k8s
 bash inventory/generate_inventory.sh
-
-# 5. Instalar e configurar o cluster Kubernetes
 ansible-playbook -i inventory/hosts.yml site.yml
+```
+
+### Stack CI/CD
+
+```bash
+source ~/.env.proxmox
+cd terraform-cicd
+cp terraform.tfvars.example terraform.tfvars   # preencher credenciais
+terraform init && terraform plan -out=tfplan.binary && terraform apply tfplan.binary
+cd ../ansible-cicd
+bash inventory/generate_inventory.sh
+ansible-playbook -i inventory/hosts.yml site.yml
+# Registrar runner (após criar token no Gitea UI em /user/settings/applications)
+ansible-playbook -i inventory/hosts.yml site.yml --tags runner \
+  -e "gitea_runner_token=SEU_TOKEN"
 ```
 
 ---
 
-## Topologia do cluster
+## Topologia de VMs
+
+### Cluster Kubernetes
 
 | Nó | Hostname | IP | VMID | vCPU | RAM | Disco |
 |----|----------|----|------|------|-----|-------|
@@ -68,11 +99,50 @@ ansible-playbook -i inventory/hosts.yml site.yml
 | Worker 1 | `k8s-worker-01` | `10.10.0.11` | 201 | 2 | 4 GB | 50 GB |
 | Worker 2 | `k8s-worker-02` | `10.10.0.12` | 202 | 2 | 4 GB | 50 GB |
 
-**Stack:** Kubernetes 1.29 · containerd · Calico CNI v3.27 · Ubuntu 22.04 cloud-init
+**Stack:** Kubernetes 1.29 · containerd · Calico CNI v3.27 · Ubuntu 22.04
+
+### Servidor CI/CD
+
+| Serviço                   | Host             | IP            | VMID | vCPU | RAM  | Disco |
+|---------------------------|------------------|---------------|------|------|------|-------|
+| Gitea + Runner + Registry | `cicd-server-01` | `10.10.0.20`  | 210  | 2    | 4 GB | 40 GB |
+
+**Serviços (Docker):** Gitea 1.21 (`:3000`) · Docker Registry v2 (`:5000`) · Act Runner 0.2.6
+**Memory limits:** Gitea 512 MB · Registry 128 MB · SO + Runner ~1.3 GB restante
 
 ---
 
 ## Changelog
+
+### 2026-04-14 — Stack CI/CD + sub-agente dev-expert-fullcycle
+
+#### Sub-agente (`.claude/agents/`)
+
+- **`dev-expert-fullcycle.md`** — Novo sub-agente Desenvolvedor Sênior Full-Cycle Python & Go. Regras: padrões Effective Go + PEP 8 com Type Hinting; testes obrigatórios (pytest / package testing) com cobertura mínima 80%; consciência de pipeline CI/CD (checklist de impacto ao alterar código); fluxo Conventional Commits + comando de disparo de deploy; otimização via goroutines (Go) e asyncio (Python).
+
+#### Terraform (`terraform-cicd/`)
+
+Stack CI/CD consolidada em 1 VM (recursos escassos de laboratório):
+
+- **`main.tf`** — Provisiona `cicd-server-01` (VMID 210, 2 vCPU, 4 GB RAM, 40 GB, IP 10.10.0.20). Mesmo padrão de provider, cloud-init e `lifecycle` do terraform-proxmox. Tags: `cicd`, `gitea`, `lab_id`, `environment`.
+- **`variables.tf`** — Reutiliza as 16 variáveis de conexão Proxmox e adiciona 9 específicas da stack: `cicd_vmid`, `cicd_ip`, `cicd_cpu_cores`, `cicd_memory_mb`, `cicd_disk_gb`, `gitea_domain`, `gitea_http_port`, `gitea_ssh_port`, `registry_port`.
+- **`outputs.tf`** — `cicd_ip`, `cicd_hostname`, `cicd_vmid`, `gitea_url`, `registry_url` e `ansible_vars` JSON para consumo pelo inventário.
+- **`terraform.tfvars.example`** — Valores de referência com instruções de `TF_VAR_*`.
+
+#### Ansible (`ansible-cicd/`)
+
+- **`ansible.cfg`** — Espelho do ansible-k8s com `forks = 5` (VM única).
+- **`group_vars/all.yml`** — Versões Gitea 1.21, Act Runner 0.2.6, Registry 2.8; portas e diretórios `/opt/cicd/*`.
+- **`inventory/`** — Mesmo padrão `hosts.yml.tpl` + `generate_inventory.sh` adaptado para único host `cicd-server-01`, lendo de `../../terraform-cicd`.
+- **`playbooks/01-prepare-node.yml`** — APT, swap off, criação de `/opt/cicd/{gitea-data,registry-data}`, sysctl `vm.max_map_count` e `fs.file-max`.
+- **`playbooks/02-install-docker.yml`** — Docker Engine via repositório oficial, `docker-compose-plugin`, usuário adicionado ao grupo `docker`.
+- **`playbooks/03-deploy-stack.yml`** — Renderiza os 3 templates Jinja2, `community.docker.docker_compose_v2`, aguarda Gitea (`:3000`, 30 retries) e Registry (`:5000/v2/`, 15 retries). Handler de recreate acionado por mudança nos templates.
+- **`playbooks/04-configure-runner.yml`** — Baixa binário `act_runner`, registra via `--no-interactive` com token passado por `-e gitea_runner_token=...`, unidade systemd completa.
+- **`templates/docker-compose.yml.j2`** — Memory limits: Gitea 512M/256M reserva, Registry 128M/64M. `GITEA__actions__ENABLED=true`. Healthchecks em ambos os serviços.
+- **`templates/gitea-app.ini.j2`** — SQLite (sem DB externo), Gitea Actions habilitado, `OFFLINE_MODE`, log Warn, sem e-mail, sem Gravatar.
+- **`templates/registry-config.yml.j2`** — Registry v2 mínimo com delete habilitado e cache in-memory.
+
+---
 
 ### 2026-04-13 — Criação inicial do projeto
 

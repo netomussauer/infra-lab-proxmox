@@ -1,0 +1,71 @@
+; ─────────────────────────────────────────────────────────
+; app.ini — Configuração do Gitea
+; Gerenciado pelo Ansible — NÃO edite manualmente.
+; Gerado a partir de: templates/gitea-app.ini.j2
+; Host: {{ inventory_hostname }} ({{ ansible_host }})
+; Lab: {{ lab_id }} / {{ environment }}
+; ─────────────────────────────────────────────────────────
+
+APP_NAME = Gitea — {{ lab_id }}
+RUN_MODE = prod
+
+[server]
+DOMAIN           = {{ gitea_domain }}
+HTTP_PORT        = 3000
+ROOT_URL         = http://{{ gitea_domain }}:{{ gitea_http_port }}/
+SSH_DOMAIN       = {{ gitea_domain }}
+SSH_PORT         = {{ gitea_ssh_port }}
+SSH_LISTEN_PORT  = 22
+LFS_START_SERVER = false
+OFFLINE_MODE     = true
+
+[database]
+DB_TYPE  = sqlite3
+PATH     = /data/gitea/gitea.db
+
+[repository]
+ROOT                       = /data/gitea/repositories
+DEFAULT_BRANCH             = main
+ENABLE_PUSH_CREATE_USER    = true
+ENABLE_PUSH_CREATE_ORG     = true
+
+[actions]
+ENABLED                    = true
+DEFAULT_ACTIONS_URL        = https://gitea.com
+
+[log]
+MODE      = console
+LEVEL     = Warn
+ROOT_PATH = /data/gitea/log
+
+[service]
+DISABLE_REGISTRATION        = false
+REQUIRE_SIGNIN_VIEW         = false
+REGISTER_EMAIL_CONFIRM      = false
+ENABLE_NOTIFY_MAIL          = false
+ALLOW_ONLY_EXTERNAL_REGISTRATION = false
+ENABLE_CAPTCHA              = false
+DEFAULT_KEEP_EMAIL_PRIVATE  = false
+DEFAULT_ALLOW_CREATE_ORGANIZATION = true
+
+[security]
+INSTALL_LOCK = false
+
+[cache]
+ENABLED  = true
+ADAPTER  = memory
+INTERVAL = 60
+
+[session]
+PROVIDER = file
+
+[picture]
+DISABLE_GRAVATAR        = true
+ENABLE_FEDERATED_AVATAR = false
+
+[mailer]
+ENABLED = false
+
+[openid]
+ENABLE_OPENID_SIGNIN = false
+ENABLE_OPENID_SIGNUP = false

@@ -1,0 +1,94 @@
+---
+# ─────────────────────────────────────────────────────────
+# 01-prepare-node.yml
+# Prepara a VM para receber a stack CI/CD:
+#   - Atualiza APT e instala pacotes base
+#   - Desabilita swap
+#   - Cria estrutura de diretórios da stack
+#   - Aplica parâmetros sysctl (vm.max_map_count, fs.file-max)
+# ─────────────────────────────────────────────────────────
+
+- name: Preparar nó CI/CD
+  hosts: cicd_servers
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Atualizar cache APT
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Instalar pacotes base necessários
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - software-properties-common
+          - python3-pip
+          - git
+        state: present
+
+    - name: Desabilitar swap (imediatamente)
+      ansible.builtin.command: swapoff -a
+      changed_when: false
+
+    - name: Remover swap do /etc/fstab (persistente)
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([^#].*\sswap\s.*)$'
+        replace: '# \1'
+
+    - name: Criar diretório principal da stack CI/CD
+      ansible.builtin.file:
+        path: "{{ docker_compose_dir }}"
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Criar diretório de dados do Gitea
+      ansible.builtin.file:
+        path: "{{ gitea_data_dir }}"
+        state: directory
+        mode: "0755"
+        owner: "1000"
+        group: "1000"
+
+    - name: Criar subdiretório de configuração do Gitea
+      ansible.builtin.file:
+        path: "{{ gitea_data_dir }}/conf"
+        state: directory
+        mode: "0755"
+        owner: "1000"
+        group: "1000"
+
+    - name: Criar diretório de dados do Registry
+      ansible.builtin.file:
+        path: "{{ registry_data_dir }}"
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Aplicar parâmetros sysctl para Gitea e containers
+      ansible.posix.sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        sysctl_file: /etc/sysctl.d/cicd.conf
+        reload: true
+      loop: "{{ cicd_sysctl_params | dict2items }}"
+
+    - name: Sincronizar relógio via timedatectl
+      ansible.builtin.command: timedatectl set-ntp true
+      changed_when: false
+
+    - name: Verificar que swap está desativado
+      ansible.builtin.command: swapon --show
+      register: swap_status
+      changed_when: false
+      failed_when: swap_status.stdout | length > 0

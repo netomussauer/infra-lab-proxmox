@@ -1,0 +1,35 @@
+---
+# ─────────────────────────────────────────────────────────
+# site.yml — Playbook principal da stack CI/CD
+# Orquestra a instalação completa: Gitea + Act Runner + Registry.
+# Execute sempre com o inventário gerado pelo generate_inventory.sh.
+#
+# Uso:
+#   ansible-playbook -i inventory/hosts.yml site.yml
+#
+# Para executar apenas um subset de tarefas use tags:
+#   ansible-playbook -i inventory/hosts.yml site.yml --tags prepare
+#   ansible-playbook -i inventory/hosts.yml site.yml --tags docker
+#   ansible-playbook -i inventory/hosts.yml site.yml --tags stack
+#   ansible-playbook -i inventory/hosts.yml site.yml --tags runner
+#
+# Para registrar o runner, passe o token gerado no Gitea:
+#   ansible-playbook -i inventory/hosts.yml site.yml \
+#     --tags runner -e "gitea_runner_token=SEU_TOKEN"
+# ─────────────────────────────────────────────────────────
+
+- name: "01 — Preparar o nó CI/CD"
+  import_playbook: playbooks/01-prepare-node.yml
+  tags: [prepare]
+
+- name: "02 — Instalar Docker Engine"
+  import_playbook: playbooks/02-install-docker.yml
+  tags: [docker]
+
+- name: "03 — Deploy da stack CI/CD (docker-compose)"
+  import_playbook: playbooks/03-deploy-stack.yml
+  tags: [stack]
+
+- name: "04 — Configurar Gitea Act Runner"
+  import_playbook: playbooks/04-configure-runner.yml
+  tags: [runner]

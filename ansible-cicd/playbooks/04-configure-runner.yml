@@ -1,0 +1,134 @@
+---
+# ─────────────────────────────────────────────────────────
+# 04-configure-runner.yml
+# Configura o Gitea Act Runner como serviço systemd:
+#   - Baixa o binário act_runner da versão gitea_runner_version
+#   - Cria o serviço systemd para execução contínua
+#   - Registra o runner no Gitea (requer gitea_runner_token)
+#
+# Uso (passando token via -e):
+#   ansible-playbook -i inventory/hosts.yml \
+#     playbooks/04-configure-runner.yml \
+#     -e "gitea_runner_token=SEU_TOKEN_GERADO_NO_GITEA"
+#
+# Para obter o token:
+#   Gitea > Site Administration > Actions > Runners > Create new runner
+# ─────────────────────────────────────────────────────────
+
+- name: Configurar Gitea Act Runner
+  hosts: cicd_servers
+  become: true
+  gather_facts: true
+
+  vars:
+    runner_install_dir: /usr/local/bin
+    runner_binary:      "{{ runner_install_dir }}/act_runner"
+    runner_work_dir:    /opt/cicd/act-runner
+    runner_config_file: /opt/cicd/act-runner/config.yml
+    runner_arch:        "linux-amd64"
+    runner_download_url: >-
+      https://gitea.com/gitea/act_runner/releases/download/v{{ gitea_runner_version }}/act_runner-{{ gitea_runner_version }}-{{ runner_arch }}
+
+  tasks:
+    - name: Criar diretório de trabalho do runner
+      ansible.builtin.file:
+        path: "{{ runner_work_dir }}"
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Baixar binário do act_runner
+      ansible.builtin.get_url:
+        url: "{{ runner_download_url }}"
+        dest: "{{ runner_binary }}"
+        mode: "0755"
+        force: false
+      register: runner_download
+
+    - name: Verificar versão do act_runner instalado
+      ansible.builtin.command: "{{ runner_binary }} --version"
+      register: runner_version_output
+      changed_when: false
+      failed_when: runner_version_output.rc != 0
+
+    - name: Exibir versão do runner
+      ansible.builtin.debug:
+        msg: "act_runner: {{ runner_version_output.stdout }}"
+
+    - name: Gerar configuração padrão do runner (se não existir)
+      ansible.builtin.command:
+        cmd: "{{ runner_binary }} generate-config > {{ runner_config_file }}"
+        creates: "{{ runner_config_file }}"
+      register: runner_config_gen
+      changed_when: runner_config_gen.rc == 0
+
+    - name: Registrar runner no Gitea (requer gitea_runner_token)
+      ansible.builtin.command: >-
+        {{ runner_binary }} register
+        --no-interactive
+        --instance http://localhost:{{ gitea_http_port }}
+        --token {{ gitea_runner_token }}
+        --name cicd-runner-01
+        --labels ubuntu-latest:docker://node:18-bullseye
+      args:
+        chdir: "{{ runner_work_dir }}"
+        creates: "{{ runner_work_dir }}/.runner"
+      register: runner_register
+      changed_when: runner_register.rc == 0
+      when: gitea_runner_token is defined and gitea_runner_token | length > 0
+
+    - name: Avisar que o token não foi fornecido
+      ansible.builtin.debug:
+        msg: >
+          gitea_runner_token nao fornecido. O runner NAO foi registrado.
+          Execute este playbook com: -e "gitea_runner_token=SEU_TOKEN"
+      when: gitea_runner_token is not defined or gitea_runner_token | length == 0
+
+    - name: Criar arquivo de unidade systemd para o runner
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/gitea-runner.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Gitea Act Runner
+          After=docker.service network-online.target
+          Requires=docker.service
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory={{ runner_work_dir }}
+          ExecStart={{ runner_binary }} daemon --config {{ runner_config_file }}
+          Restart=always
+          RestartSec=5
+          StandardOutput=journal
+          StandardError=journal
+          SyslogIdentifier=gitea-runner
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Reiniciar gitea-runner
+
+    - name: Habilitar e iniciar serviço gitea-runner
+      ansible.builtin.systemd:
+        name: gitea-runner
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: gitea_runner_token is defined and gitea_runner_token | length > 0
+
+    - name: Verificar que o runner está ativo
+      ansible.builtin.command: systemctl is-active gitea-runner
+      register: runner_status
+      changed_when: false
+      failed_when: runner_status.stdout != "active"
+      when: gitea_runner_token is defined and gitea_runner_token | length > 0
+
+  handlers:
+    - name: Reiniciar gitea-runner
+      ansible.builtin.systemd:
+        name: gitea-runner
+        state: restarted
+        daemon_reload: true

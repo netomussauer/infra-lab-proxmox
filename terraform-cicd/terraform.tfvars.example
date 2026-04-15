@@ -1,0 +1,57 @@
+# ─────────────────────────────────────────────────────────
+# terraform.tfvars.example — Valores de exemplo para a stack CI/CD
+#
+# INSTRUCOES:
+#   1. Copie este arquivo para terraform.tfvars:
+#        cp terraform.tfvars.example terraform.tfvars
+#   2. Preencha os valores marcados com "<PREENCHER>"
+#   3. NUNCA versione o terraform.tfvars — ele contem credenciais
+#   4. Prefira variaveis de ambiente para segredos:
+#        export TF_VAR_proxmox_token_id="admin@pve!terraform"
+#        export TF_VAR_proxmox_token_secret="uuid-do-token"
+# ─────────────────────────────────────────────────────────
+
+# ── Conexao Proxmox ──────────────────────────────────────
+# Exportar via ambiente para nao versionat credenciais:
+#   source ~/.env.proxmox
+
+proxmox_endpoint        = "https://192.168.1.10:8006"   # <PREENCHER>
+proxmox_token_id        = "admin@pve!terraform"          # <PREENCHER>
+proxmox_token_secret    = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # <PREENCHER>
+proxmox_tls_insecure    = true
+proxmox_ssh_private_key = "~/.ssh/id_ed25519_proxmox"
+proxmox_node            = "pve-node01"                   # <PREENCHER>
+
+# ── Identificacao do laboratorio ─────────────────────────
+lab_id      = "lab-k8s-proxmox-01"
+environment = "dev"
+cluster_name = "k8s"
+
+# ── Template e Storage ────────────────────────────────────
+template_vmid     = 9000          # VMID do template cloud-init Ubuntu 22.04
+storage_pool      = "local-lvm"   # <PREENCHER> se diferente
+cloudinit_storage = "local-lvm"   # <PREENCHER> se diferente
+
+# ── Rede ─────────────────────────────────────────────────
+network_bridge  = "vmbr1"        # <PREENCHER> bridge do seu Proxmox
+network_gateway = "10.10.0.1"
+network_prefix  = "24"
+dns_servers     = ["8.8.8.8", "1.1.1.1"]
+dns_domain      = "lab.local"
+
+# ── SSH / Cloud-Init ──────────────────────────────────────
+ssh_public_key_file = "~/.ssh/id_ed25519_proxmox.pub"
+vm_user             = "ubuntu"
+
+# ── VM CI/CD ─────────────────────────────────────────────
+cicd_vmid      = 210          # Nao conflita com k8s (200-202)
+cicd_ip        = "10.10.0.20"
+cicd_cpu_cores = 2
+cicd_memory_mb = 4096         # 4 GB
+cicd_disk_gb   = 40
+
+# ── Servicos da stack ─────────────────────────────────────
+gitea_domain    = "gitea.lab.local"
+gitea_http_port = 3000
+gitea_ssh_port  = 2222
+registry_port   = 5000
