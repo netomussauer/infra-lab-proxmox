@@ -6,6 +6,10 @@ terraform {
       source  = "bpg/proxmox"
       version = "~> 0.50"
     }
+    netbox = {
+      source  = "netbox-community/netbox"
+      version = "~> 3.5"
+    }
   }
 }
 
@@ -87,7 +91,8 @@ resource "proxmox_virtual_environment_vm" "k8s_master" {
 
     ip_config {
       ipv4 {
-        address = "${var.master_ip}/${var.network_prefix}"
+        # IP alocado dinamicamente pelo NetBox IPAM (netbox.tf → local.netbox_master_ip)
+        address = "${local.netbox_master_ip}/${var.network_prefix}"
         gateway = var.network_gateway
       }
     }
@@ -167,8 +172,8 @@ resource "proxmox_virtual_environment_vm" "k8s_workers" {
 
     ip_config {
       ipv4 {
-        # Cada worker recebe o IP correspondente ao seu índice na lista
-        address = "${var.worker_ips[count.index]}/${var.network_prefix}"
+        # IP alocado dinamicamente pelo NetBox IPAM (netbox.tf → local.netbox_worker_ips)
+        address = "${local.netbox_worker_ips[count.index]}/${var.network_prefix}"
         gateway = var.network_gateway
       }
     }

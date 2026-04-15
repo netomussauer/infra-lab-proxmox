@@ -5,8 +5,8 @@
 # ─────────────────────────────────────────────────────────
 
 output "cicd_ip" {
-  description = "IP da VM do servidor CI/CD"
-  value       = var.cicd_ip
+  description = "IP da VM do servidor CI/CD (alocado pelo NetBox IPAM)"
+  value       = local.netbox_cicd_ip
 }
 
 output "cicd_hostname" {
@@ -21,12 +21,12 @@ output "cicd_vmid" {
 
 output "gitea_url" {
   description = "URL HTTP de acesso ao Gitea"
-  value       = "http://${var.cicd_ip}:${var.gitea_http_port}"
+  value       = "http://${local.netbox_cicd_ip}:${var.gitea_http_port}"
 }
 
 output "registry_url" {
   description = "Endereço do Docker Registry v2 (host:porta)"
-  value       = "${var.cicd_ip}:${var.registry_port}"
+  value       = "${local.netbox_cicd_ip}:${var.registry_port}"
 }
 
 output "vm_user" {
@@ -44,7 +44,7 @@ output "ansible_vars" {
   description = "Bloco JSON com todas as variáveis necessárias para o inventário Ansible da stack CI/CD"
   value = jsonencode({
     cicd_hostname   = proxmox_virtual_environment_vm.cicd_server.name
-    cicd_ip         = var.cicd_ip
+    cicd_ip         = local.netbox_cicd_ip
     vm_user         = var.vm_user
     ssh_private_key = var.proxmox_ssh_private_key
     lab_id          = var.lab_id

@@ -33,3 +33,7 @@
 - name: "04 — Configurar Gitea Act Runner"
   import_playbook: playbooks/04-configure-runner.yml
   tags: [runner]
+
+- name: "05 — Registrar servidor CI/CD no NetBox"
+  import_playbook: playbooks/05-register-netbox.yml
+  tags: [netbox]

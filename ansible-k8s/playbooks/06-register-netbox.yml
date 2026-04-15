@@ -1,0 +1,142 @@
+---
+# =============================================================================
+# 06-register-netbox.yml — Registrar nós do cluster Kubernetes no NetBox
+#
+# Pré-requisitos:
+#   pip install pynetbox
+#   ansible-galaxy collection install netbox.netbox
+#
+# Variáveis necessárias (group_vars/all.yml ou extra-vars):
+#   netbox_url          : URL da API do NetBox
+#   netbox_token        : API Token (via env NETBOX_TOKEN)
+#   netbox_validate_certs: false para lab com self-signed cert
+#   netbox_cluster_name : Nome do cluster no NetBox
+#   lab_id, environment : Tags obrigatórias de rastreabilidade
+#
+# Uso:
+#   export NETBOX_TOKEN="seu-token-aqui"
+#   ansible-playbook -i inventory/hosts.yml playbooks/06-register-netbox.yml
+#   ansible-playbook -i inventory/hosts.yml site.yml --tags netbox
+# =============================================================================
+
+- name: "06 — Registrar nós Kubernetes no NetBox CMDB"
+  hosts: all
+  become: false
+  gather_facts: true
+
+  collections:
+    - netbox.netbox
+
+  vars:
+    # Determina o papel do nó com base no grupo de inventário
+    _k8s_role: >-
+      {{ 'control-plane' if inventory_hostname in groups['masters'] | default([])
+         else 'worker' }}
+    # Tags comuns a todos os nós — inclui as 5 tags obrigatórias do laboratório
+    _common_tags:
+      - "{{ lab_id }}"
+      - "{{ environment }}"
+      - "k8s"
+      - "{{ _k8s_role }}"
+
+  tasks:
+    # ── Pré-validação: garantir que o token foi injetado ──────────────────────
+    - name: "Verificar que NETBOX_TOKEN está definido"
+      ansible.builtin.assert:
+        that:
+          - netbox_token is defined
+          - netbox_token | length > 0
+        fail_msg: >
+          netbox_token está vazio. Exporte a variável de ambiente:
+          export NETBOX_TOKEN="seu-token-aqui"
+      tags: [netbox, validate]
+
+    # ── Cluster Kubernetes ────────────────────────────────────────────────────
+    - name: "Garantir que o cluster '{{ netbox_cluster_name }}' existe no NetBox"
+      netbox.netbox.netbox_cluster:
+        netbox_url: "{{ netbox_url }}"
+        netbox_token: "{{ netbox_token }}"
+        validate_certs: "{{ netbox_validate_certs }}"
+        data:
+          name: "{{ netbox_cluster_name }}"
+          type: "Kubernetes"
+          comments: >
+            Cluster Kubernetes — lab_id={{ lab_id }} | environment={{ environment }}
+            | managed_by=ansible | project=hybrid-infra | owner=jose.mussauer
+        state: present
+      run_once: true
+      delegate_to: localhost
+      tags: [netbox, cluster]
+
+    # ── Registrar / atualizar cada VM no NetBox ───────────────────────────────
+    - name: "Registrar VM '{{ inventory_hostname }}' no NetBox"
+      netbox.netbox.netbox_virtual_machine:
+        netbox_url: "{{ netbox_url }}"
+        netbox_token: "{{ netbox_token }}"
+        validate_certs: "{{ netbox_validate_certs }}"
+        data:
+          name: "{{ inventory_hostname }}"
+          cluster: "{{ netbox_cluster_name }}"
+          status: active
+          vcpus: "{{ ansible_processor_vcpus }}"
+          memory: "{{ ansible_memtotal_mb }}"
+          platform: "Ubuntu 22.04"
+          comments: >
+            Nó Kubernetes ({{ _k8s_role }}) — lab_id={{ lab_id }}
+            | environment={{ environment }} | managed_by=ansible
+            | project=hybrid-infra | owner=jose.mussauer
+          tags: "{{ _common_tags }}"
+          custom_fields:
+            lab_id: "{{ lab_id }}"
+            lab_owner: "jose.mussauer"
+            environment: "{{ environment }}"
+            managed_by: "ansible"
+            project: "hybrid-infra"
+            k8s_role: "{{ _k8s_role }}"
+        state: present
+      delegate_to: localhost
+      tags: [netbox, vm]
+
+    # ── Interface de rede ─────────────────────────────────────────────────────
+    - name: "Garantir interface eth0 para '{{ inventory_hostname }}' no NetBox"
+      netbox.netbox.netbox_vm_interface:
+        netbox_url: "{{ netbox_url }}"
+        netbox_token: "{{ netbox_token }}"
+        validate_certs: "{{ netbox_validate_certs }}"
+        data:
+          virtual_machine: "{{ inventory_hostname }}"
+          name: eth0
+          enabled: true
+        state: present
+      delegate_to: localhost
+      register: _netbox_iface
+      tags: [netbox, interface]
+
+    # ── Confirmar IP como "active" e associar à interface ────────────────────
+    - name: "Confirmar IP {{ ansible_host }} como active no NetBox"
+      netbox.netbox.netbox_ip_address:
+        netbox_url: "{{ netbox_url }}"
+        netbox_token: "{{ netbox_token }}"
+        validate_certs: "{{ netbox_validate_certs }}"
+        data:
+          address: "{{ ansible_host }}"
+          status: active
+          assigned_object_type: virtualization.vminterface
+          assigned_object_id: "{{ _netbox_iface.interface.id }}"
+          description: "{{ inventory_hostname }} — eth0"
+          tags:
+            - "{{ lab_id }}"
+            - "{{ environment }}"
+        state: present
+      delegate_to: localhost
+      tags: [netbox, ip]
+
+    # ── Resumo final ──────────────────────────────────────────────────────────
+    - name: "Exibir URL de verificação no NetBox"
+      ansible.builtin.debug:
+        msg:
+          - "VM registrada: {{ inventory_hostname }}"
+          - "Papel k8s   : {{ _k8s_role }}"
+          - "IP           : {{ ansible_host }}"
+          - "NetBox URL   : {{ netbox_url }}/virtualization/virtual-machines/?cluster={{ netbox_cluster_name }}"
+      tags: [netbox, debug]

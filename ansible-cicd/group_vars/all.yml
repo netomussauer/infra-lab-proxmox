@@ -36,3 +36,10 @@ lab_owner:   "jose.mussauer"
 cicd_sysctl_params:
   vm.max_map_count: 262144
   fs.file-max: 65536
+
+# ── NetBox IPAM ───────────────────────────────────────────
+# netbox_token deve ser injetado via variável de ambiente: NETBOX_TOKEN
+# Nunca versionar tokens em texto plano — use ansible-vault para produção.
+netbox_url: "http://10.10.0.5:8000"
+netbox_token: "{{ lookup('env', 'NETBOX_TOKEN') }}"
+netbox_validate_certs: false

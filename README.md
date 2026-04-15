@@ -114,6 +114,49 @@ ansible-playbook -i inventory/hosts.yml site.yml --tags runner \
 
 ## Changelog
 
+### 2026-04-14 — Integração NetBox IPAM + CMDB
+
+Toda VM provisionada agora consulta e registra endereços no NetBox antes de aplicar configurações de rede.
+
+#### `scripts/netbox-get-available-ips.sh`
+
+Script Bash invocado pelo `external` data source do Terraform. Executa dois GETs somente-leitura na API do NetBox (busca o ID do prefixo por CIDR, depois lista os próximos IPs disponíveis), retorna JSON com `ip_0..ip_N` e `prefix_id`. Falha com `exit 1` se o prefixo não existir, houver IPs insuficientes ou a autenticação falhar. Flag `-k` ativada apenas quando `insecure=true`.
+
+#### Terraform (`terraform-proxmox/netbox.tf` e `terraform-cicd/netbox.tf`)
+
+- **Provider `netbox-community/netbox ~> 3.5`** adicionado em ambos os stacks
+- **`data "external" "available_ips"`** — chama o script acima solicitando `worker_count+1` IPs (k8s) ou `1` IP (cicd); somente leitura, sem side effects no `plan`
+- **`netbox_ip_address`** resources — reservam cada IP no IPAM com `status = "active"` e `lifecycle { ignore_changes = [ip_address] }` para idempotência em re-runs
+- **`netbox_cluster_type` / `netbox_cluster`** — registram o cluster Kubernetes no NetBox
+- **`netbox_virtual_machine` / `netbox_interface` / `netbox_primary_ip`** — registram cada VM com vCPU, RAM, disco, tags obrigatórias e IP primário associado à interface
+- **`main.tf`** de ambos os stacks alterados: `address` no bloco `initialization` usa `local.netbox_*_ip` em vez de `var.*_ip`
+- **`variables.tf`** de ambos os stacks: adicionadas `netbox_url`, `netbox_token` (sensitive), `netbox_insecure`, `network_cidr`
+- **`outputs.tf`** de ambos os stacks: `master_ip`, `worker_ips`, `cicd_ip` e `ansible_vars` JSON refletem os IPs alocados pelo NetBox
+
+#### Ansible (`playbooks/06-register-netbox.yml` e `playbooks/05-register-netbox.yml`)
+
+- **`ansible-k8s/playbooks/06-register-netbox.yml`** — pós-provisionamento: atualiza cada nó no NetBox via `netbox.netbox` collection com `k8s_role: control-plane|worker` como custom field, associa IP à interface, debug final com link de verificação
+- **`ansible-cicd/playbooks/05-register-netbox.yml`** — registra `cicd-server-01` com tags `cicd`/`gitea`/`registry` e 3 serviços: Gitea HTTP (:3000), Gitea SSH (:2222), Registry (:5000)
+- **`group_vars/all.yml`** em ambos os stacks: `netbox_url`, `netbox_token` via `lookup('env', 'NETBOX_TOKEN')`, `netbox_validate_certs: false`
+- **`site.yml`** em ambos os stacks: novo step de registro NetBox adicionado ao final com `tags: [netbox]`
+
+#### Pré-requisitos adicionados
+
+```bash
+# Token NetBox (nunca versionar)
+export TF_VAR_netbox_token="seu-token"
+export NETBOX_TOKEN="seu-token"
+
+# Dependências Ansible
+ansible-galaxy collection install netbox.netbox
+pip install pynetbox
+
+# NetBox deve ter o prefixo 10.10.0.0/24 criado no IPAM
+# Token com permissões: ipam.prefix (read), ipam.ipaddress (write), virtualization.* (write)
+```
+
+---
+
 ### 2026-04-14 — Stack CI/CD
 
 #### Terraform (`terraform-cicd/`)

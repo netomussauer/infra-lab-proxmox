@@ -1,0 +1,172 @@
+---
+# =============================================================================
+# 05-register-netbox.yml — Registrar servidor CI/CD no NetBox
+#
+# Pré-requisitos:
+#   pip install pynetbox
+#   ansible-galaxy collection install netbox.netbox
+#
+# Variáveis necessárias (group_vars/all.yml ou extra-vars):
+#   netbox_url          : URL da API do NetBox
+#   netbox_token        : API Token (via env NETBOX_TOKEN)
+#   netbox_validate_certs: false para lab com self-signed cert
+#   lab_id, environment : Tags obrigatórias de rastreabilidade
+#   gitea_http_port, gitea_ssh_port, registry_port: portas dos serviços
+#
+# Uso:
+#   export NETBOX_TOKEN="seu-token-aqui"
+#   ansible-playbook -i inventory/hosts.yml playbooks/05-register-netbox.yml
+#   ansible-playbook -i inventory/hosts.yml site.yml --tags netbox
+# =============================================================================
+
+- name: "05 — Registrar servidor CI/CD no NetBox CMDB"
+  hosts: cicd_servers
+  become: false
+  gather_facts: true
+
+  collections:
+    - netbox.netbox
+
+  vars:
+    # Tags obrigatórias do laboratório + identificadores de serviço
+    _cicd_tags:
+      - "{{ lab_id }}"
+      - "{{ environment }}"
+      - "cicd"
+      - "gitea"
+      - "registry"
+
+  tasks:
+    # ── Pré-validação: garantir que o token foi injetado ──────────────────────
+    - name: "Verificar que NETBOX_TOKEN está definido"
+      ansible.builtin.assert:
+        that:
+          - netbox_token is defined
+          - netbox_token | length > 0
+        fail_msg: >
+          netbox_token está vazio. Exporte a variável de ambiente:
+          export NETBOX_TOKEN="seu-token-aqui"
+      tags: [netbox, validate]
+
+    # ── Registrar / atualizar a VM no NetBox ──────────────────────────────────
+    - name: "Registrar VM '{{ inventory_hostname }}' no NetBox"
+      netbox.netbox.netbox_virtual_machine:
+        netbox_url: "{{ netbox_url }}"
+        netbox_token: "{{ netbox_token }}"
+        validate_certs: "{{ netbox_validate_certs }}"
+        data:
+          name: "{{ inventory_hostname }}"
+          status: active
+          vcpus: "{{ ansible_processor_vcpus }}"
+          memory: "{{ ansible_memtotal_mb }}"
+          platform: "Ubuntu 22.04"
+          comments: >
+            Stack CI/CD (Gitea {{ gitea_version }} + Registry {{ registry_version }}
+            + Act Runner {{ gitea_runner_version }}) — lab_id={{ lab_id }}
+            | environment={{ environment }} | managed_by=ansible
+            | project=hybrid-infra | owner=jose.mussauer
+          tags: "{{ _cicd_tags }}"
+          custom_fields:
+            lab_id: "{{ lab_id }}"
+            lab_owner: "jose.mussauer"
+            environment: "{{ environment }}"
+            managed_by: "ansible"
+            project: "hybrid-infra"
+        state: present
+      delegate_to: localhost
+      tags: [netbox, vm]
+
+    # ── Interface de rede ─────────────────────────────────────────────────────
+    - name: "Garantir interface eth0 para '{{ inventory_hostname }}' no NetBox"
+      netbox.netbox.netbox_vm_interface:
+        netbox_url: "{{ netbox_url }}"
+        netbox_token: "{{ netbox_token }}"
+        validate_certs: "{{ netbox_validate_certs }}"
+        data:
+          virtual_machine: "{{ inventory_hostname }}"
+          name: eth0
+          enabled: true
+        state: present
+      delegate_to: localhost
+      register: _netbox_iface
+      tags: [netbox, interface]
+
+    # ── Confirmar IP como "active" e associar à interface ────────────────────
+    - name: "Confirmar IP {{ ansible_host }} como active no NetBox"
+      netbox.netbox.netbox_ip_address:
+        netbox_url: "{{ netbox_url }}"
+        netbox_token: "{{ netbox_token }}"
+        validate_certs: "{{ netbox_validate_certs }}"
+        data:
+          address: "{{ ansible_host }}"
+          status: active
+          assigned_object_type: virtualization.vminterface
+          assigned_object_id: "{{ _netbox_iface.interface.id }}"
+          description: "{{ inventory_hostname }} — eth0 (cicd)"
+          tags:
+            - "{{ lab_id }}"
+            - "{{ environment }}"
+        state: present
+      delegate_to: localhost
+      tags: [netbox, ip]
+
+    # ── Registrar serviços no NetBox ──────────────────────────────────────────
+    - name: "Registrar serviço Gitea HTTP (porta {{ gitea_http_port }}) no NetBox"
+      netbox.netbox.netbox_service:
+        netbox_url: "{{ netbox_url }}"
+        netbox_token: "{{ netbox_token }}"
+        validate_certs: "{{ netbox_validate_certs }}"
+        data:
+          virtual_machine: "{{ inventory_hostname }}"
+          name: "Gitea"
+          ports:
+            - "{{ gitea_http_port }}"
+          protocol: tcp
+          description: "Gitea Git Service — HTTP"
+        state: present
+      delegate_to: localhost
+      tags: [netbox, services]
+
+    - name: "Registrar serviço Gitea SSH (porta {{ gitea_ssh_port }}) no NetBox"
+      netbox.netbox.netbox_service:
+        netbox_url: "{{ netbox_url }}"
+        netbox_token: "{{ netbox_token }}"
+        validate_certs: "{{ netbox_validate_certs }}"
+        data:
+          virtual_machine: "{{ inventory_hostname }}"
+          name: "Gitea-SSH"
+          ports:
+            - "{{ gitea_ssh_port }}"
+          protocol: tcp
+          description: "Gitea Git Service — SSH"
+        state: present
+      delegate_to: localhost
+      tags: [netbox, services]
+
+    - name: "Registrar serviço Docker Registry (porta {{ registry_port }}) no NetBox"
+      netbox.netbox.netbox_service:
+        netbox_url: "{{ netbox_url }}"
+        netbox_token: "{{ netbox_token }}"
+        validate_certs: "{{ netbox_validate_certs }}"
+        data:
+          virtual_machine: "{{ inventory_hostname }}"
+          name: "Docker-Registry"
+          ports:
+            - "{{ registry_port }}"
+          protocol: tcp
+          description: "Docker Registry v2"
+        state: present
+      delegate_to: localhost
+      tags: [netbox, services]
+
+    # ── Resumo final ──────────────────────────────────────────────────────────
+    - name: "Exibir URLs de acesso e link de verificação no NetBox"
+      ansible.builtin.debug:
+        msg:
+          - "VM registrada : {{ inventory_hostname }}"
+          - "IP            : {{ ansible_host }}"
+          - "Gitea HTTP    : http://{{ ansible_host }}:{{ gitea_http_port }}"
+          - "Gitea SSH     : ssh://git@{{ ansible_host }}:{{ gitea_ssh_port }}"
+          - "Registry      : {{ ansible_host }}:{{ registry_port }}"
+          - "NetBox URL    : {{ netbox_url }}/virtualization/virtual-machines/?name={{ inventory_hostname }}"
+      tags: [netbox, debug]

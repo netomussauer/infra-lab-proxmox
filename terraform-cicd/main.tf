@@ -6,6 +6,10 @@ terraform {
       source  = "bpg/proxmox"
       version = "~> 0.50"
     }
+    netbox = {
+      source  = "netbox-community/netbox"
+      version = "~> 3.5"
+    }
   }
 }
 
@@ -89,7 +93,8 @@ resource "proxmox_virtual_environment_vm" "cicd_server" {
 
     ip_config {
       ipv4 {
-        address = "${var.cicd_ip}/${var.network_prefix}"
+        # IP alocado dinamicamente pelo NetBox IPAM (netbox.tf → local.netbox_cicd_ip)
+        address = "${local.netbox_cicd_ip}/${var.network_prefix}"
         gateway = var.network_gateway
       }
     }

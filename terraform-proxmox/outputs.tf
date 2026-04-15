@@ -5,8 +5,8 @@
 # ─────────────────────────────────────────────────────────
 
 output "master_ip" {
-  description = "IP do nó master do cluster Kubernetes"
-  value       = var.master_ip
+  description = "IP do nó master do cluster Kubernetes (alocado pelo NetBox IPAM)"
+  value       = local.netbox_master_ip
 }
 
 output "master_hostname" {
@@ -20,8 +20,8 @@ output "master_vmid" {
 }
 
 output "worker_ips" {
-  description = "Lista de IPs dos nós worker em ordem de índice"
-  value       = var.worker_ips
+  description = "Lista de IPs dos nós worker em ordem de índice (alocados pelo NetBox IPAM)"
+  value       = local.netbox_worker_ips
 }
 
 output "worker_hostnames" {
@@ -59,9 +59,9 @@ output "ansible_vars" {
   description = "Bloco JSON com todas as variáveis necessárias para o inventário Ansible"
   value = jsonencode({
     cluster_name    = var.cluster_name
-    master_ip       = var.master_ip
+    master_ip       = local.netbox_master_ip
     master_hostname = proxmox_virtual_environment_vm.k8s_master.name
-    worker_ips      = var.worker_ips
+    worker_ips      = local.netbox_worker_ips
     worker_hostnames = proxmox_virtual_environment_vm.k8s_workers[*].name
     vm_user         = var.vm_user
     ssh_private_key = var.proxmox_ssh_private_key

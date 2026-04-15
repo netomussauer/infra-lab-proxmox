@@ -197,3 +197,30 @@ variable "registry_port" {
   type        = number
   default     = 5000
 }
+
+# ─────────────────────────────────────────────────────────
+# NetBox IPAM
+# ─────────────────────────────────────────────────────────
+
+variable "netbox_url" {
+  description = "URL base da API do NetBox (ex: http://10.10.0.5:8000)"
+  type        = string
+}
+
+variable "netbox_token" {
+  description = "API Token do NetBox para autenticação"
+  type        = string
+  sensitive   = true
+}
+
+variable "netbox_insecure" {
+  description = "Ignorar verificação TLS do NetBox (true para lab)"
+  type        = bool
+  default     = true
+}
+
+variable "network_cidr" {
+  description = "CIDR completo da rede das VMs (ex: 10.10.0.0/24) — usado para consulta do prefixo no NetBox. Deve ser consistente com network_gateway e network_prefix."
+  type        = string
+  default     = "10.10.0.0/24"
+}

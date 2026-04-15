@@ -34,3 +34,7 @@
 - name: "05 — Ingressar workers no cluster"
   import_playbook: playbooks/05-join-workers.yml
   tags: [workers]
+
+- name: "06 — Registrar cluster no NetBox"
+  import_playbook: playbooks/06-register-netbox.yml
+  tags: [netbox]

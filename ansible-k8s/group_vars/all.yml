@@ -40,3 +40,11 @@ k8s_sysctl_params:
 # ── Identificação do laboratório ─────────────────────────
 lab_id: "lab-k8s-proxmox-01"
 environment: "dev"
+
+# ── NetBox IPAM ───────────────────────────────────────────
+# netbox_token deve ser injetado via variável de ambiente: NETBOX_TOKEN
+# Nunca versionar tokens em texto plano — use ansible-vault para produção.
+netbox_url: "http://10.10.0.5:8000"
+netbox_token: "{{ lookup('env', 'NETBOX_TOKEN') }}"
+netbox_validate_certs: false
+netbox_cluster_name: "{{ cluster_name | default('k8s') }}"

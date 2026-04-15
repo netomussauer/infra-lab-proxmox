@@ -55,3 +55,13 @@ gitea_domain    = "gitea.lab.local"
 gitea_http_port = 3000
 gitea_ssh_port  = 2222
 registry_port   = 5000
+
+# ── NetBox IPAM ───────────────────────────────────────────
+# O IP é alocado automaticamente — cicd_ip acima é ignorado
+# quando o NetBox está habilitado.
+# Exporte o token via variável de ambiente para não versionar:
+#   export TF_VAR_netbox_token="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+netbox_url      = "http://10.10.0.5:8000"
+netbox_token    = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+netbox_insecure = true
+network_cidr    = "10.10.0.0/24"

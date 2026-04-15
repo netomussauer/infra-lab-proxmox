@@ -49,3 +49,13 @@ worker_ips        = ["10.10.0.11", "10.10.0.12"]
 worker_cpu_cores  = 2
 worker_memory_mb  = 4096
 worker_disk_gb    = 50
+
+# ── NetBox IPAM ───────────────────────────────────────────
+# IPs são alocados automaticamente — master_ip e worker_ips acima
+# são ignorados quando o NetBox está habilitado.
+# Exporte o token via variável de ambiente para não versionar:
+#   export TF_VAR_netbox_token="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+netbox_url      = "http://10.10.0.5:8000"
+netbox_token    = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+netbox_insecure = true
+network_cidr    = "10.10.0.0/24"
