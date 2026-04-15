@@ -298,25 +298,26 @@ check_deps() {
 # WRAPPERS DA API NETBOX
 # =============================================================================
 
-# Monta as opções base do curl
-_curl_opts() {
-  local -a opts=(-s -H "Authorization: Token ${NETBOX_TOKEN}" -H "Content-Type: application/json")
-  if [[ "$INSECURE" == "true" ]]; then
-    opts+=(-k)
-  fi
-  printf '%s\n' "${opts[@]}"
+# Popula o array global CURL_BASE_ARGS com as opções comuns a todas as chamadas.
+# Usar array global evita o padrão printf+mapfile que fragmenta headers no Bash.
+_build_curl_base_args() {
+  CURL_BASE_ARGS=(
+    -s
+    -H "Authorization: Token ${NETBOX_TOKEN}"
+    -H "Content-Type: application/json"
+    -H "Accept: application/json"
+  )
+  [[ "$INSECURE" == "true" ]] && CURL_BASE_ARGS+=(-k)
 }
 
 # nb_get URL
 # Executa GET. Retorna body em stdout; HTTP code em NB_LAST_HTTP_CODE.
 nb_get() {
   local url="$1"
-  local -a curl_opts
-  mapfile -t curl_opts < <(_curl_opts)
 
   log_verbose "GET ${url}"
 
-  NB_LAST_HTTP_CODE=$(curl "${curl_opts[@]}" \
+  NB_LAST_HTTP_CODE=$(curl "${CURL_BASE_ARGS[@]}" \
     -o "${NB_RESPONSE_TMP}" \
     -w "%{http_code}" \
     "${url}" 2>/dev/null) || {
@@ -340,12 +341,10 @@ nb_get() {
 nb_post() {
   local url="$1"
   local body="$2"
-  local -a curl_opts
-  mapfile -t curl_opts < <(_curl_opts)
 
   log_verbose "POST ${url}"
 
-  NB_LAST_HTTP_CODE=$(curl "${curl_opts[@]}" \
+  NB_LAST_HTTP_CODE=$(curl "${CURL_BASE_ARGS[@]}" \
     -o "${NB_RESPONSE_TMP}" \
     -w "%{http_code}" \
     -X POST \
@@ -371,12 +370,10 @@ nb_post() {
 nb_patch() {
   local url="$1"
   local body="$2"
-  local -a curl_opts
-  mapfile -t curl_opts < <(_curl_opts)
 
   log_verbose "PATCH ${url}"
 
-  NB_LAST_HTTP_CODE=$(curl "${curl_opts[@]}" \
+  NB_LAST_HTTP_CODE=$(curl "${CURL_BASE_ARGS[@]}" \
     -o "${NB_RESPONSE_TMP}" \
     -w "%{http_code}" \
     -X PATCH \
@@ -818,6 +815,9 @@ validate_config() {
   else
     token_masked="${NETBOX_TOKEN}..."
   fi
+
+  # Montar array de argumentos curl com token e flags TLS confirmados
+  _build_curl_base_args
 
   log_info "NetBox URL  : ${NETBOX_URL}"
   log_info "Token       : ${token_masked}"
