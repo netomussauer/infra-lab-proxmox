@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
 # bookstack-sync-docs.sh
-# Varre o projeto infra-lab-proxmox, classifica arquivos como ADR ou
-# Procedimento Técnico, publica no BookStack pré-existente no laboratório
-# e detecta atualizações em re-runs via state file com SHA256.
+# Varre o projeto infra-lab-proxmox e publica cada arquivo como um Book
+# dentro da Shelf correta (ADRs ou Procedimentos Técnicos) no BookStack.
+# Cada Book contém exatamente uma Page com o conteúdo do arquivo.
+# Detecta atualizações em re-runs via state file com SHA256.
 #
 # Uso: bookstack-sync-docs.sh [OPÇÕES]
 #
@@ -91,42 +92,44 @@ declare -a BS_BASE_ARGS=()
 BS_LAST_HTTP_CODE=""
 
 # =============================================================================
-# FILE MAP — array associativo (chave: caminho relativo; valor: BOOK|CHAPTER|PAGE)
+# FILE MAP — array associativo (chave: caminho relativo; valor: SHELF|BOOK_TITLE)
+# Cada arquivo vira um Book dentro da Shelf indicada.
+# Dentro do Book há exatamente uma Page com o mesmo título do Book.
 # =============================================================================
 
 declare -A FILE_MAP
 
-FILE_MAP["README.md"]="Procedimentos Técnicos|Visão Geral|Visão Geral do Projeto"
-FILE_MAP[".claudecode.md"]="Procedimentos Técnicos|Visão Geral|Instruções Globais do Projeto"
-FILE_MAP["README.infraestructure.md"]="Procedimentos Técnicos|Rede e IPAM|Referência de Infraestrutura Proxmox"
-FILE_MAP["terraform-proxmox/main.tf"]="Procedimentos Técnicos|Terraform - Kubernetes|Provisionamento de VMs Kubernetes"
-FILE_MAP["terraform-proxmox/variables.tf"]="Procedimentos Técnicos|Terraform - Kubernetes|Variáveis Terraform - Kubernetes"
-FILE_MAP["terraform-proxmox/outputs.tf"]="Procedimentos Técnicos|Terraform - Kubernetes|Outputs Terraform - Kubernetes"
-FILE_MAP["terraform-proxmox/netbox.tf"]="Procedimentos Técnicos|Terraform - Kubernetes|Integração NetBox - Kubernetes"
-FILE_MAP["terraform-cicd/main.tf"]="Procedimentos Técnicos|Terraform - CI/CD|Provisionamento VM CI/CD"
-FILE_MAP["terraform-cicd/variables.tf"]="Procedimentos Técnicos|Terraform - CI/CD|Variáveis Terraform - CI/CD"
-FILE_MAP["terraform-cicd/outputs.tf"]="Procedimentos Técnicos|Terraform - CI/CD|Outputs Terraform - CI/CD"
-FILE_MAP["terraform-cicd/netbox.tf"]="Procedimentos Técnicos|Terraform - CI/CD|Integração NetBox - CI/CD"
-FILE_MAP["ansible-k8s/site.yml"]="Procedimentos Técnicos|Ansible - Kubernetes|Orquestração do Cluster Kubernetes"
-FILE_MAP["ansible-k8s/group_vars/all.yml"]="Procedimentos Técnicos|Ansible - Kubernetes|Variáveis Globais - Kubernetes"
-FILE_MAP["ansible-k8s/playbooks/01-prepare-nodes.yml"]="Procedimentos Técnicos|Ansible - Kubernetes|Preparação dos Nós"
-FILE_MAP["ansible-k8s/playbooks/02-install-containerd.yml"]="Procedimentos Técnicos|Ansible - Kubernetes|Instalação do containerd"
-FILE_MAP["ansible-k8s/playbooks/03-install-kubeadm.yml"]="Procedimentos Técnicos|Ansible - Kubernetes|Instalação do kubeadm"
-FILE_MAP["ansible-k8s/playbooks/04-init-master.yml"]="Procedimentos Técnicos|Ansible - Kubernetes|Inicialização do Master"
-FILE_MAP["ansible-k8s/playbooks/05-join-workers.yml"]="Procedimentos Técnicos|Ansible - Kubernetes|Ingresso dos Workers"
-FILE_MAP["ansible-k8s/playbooks/06-register-netbox.yml"]="Procedimentos Técnicos|Rede e IPAM|Registro K8s no NetBox"
-FILE_MAP["ansible-k8s/inventory/generate_inventory.sh"]="Procedimentos Técnicos|Ansible - Kubernetes|Geração do Inventário Dinâmico"
-FILE_MAP["ansible-cicd/site.yml"]="Procedimentos Técnicos|Ansible - CI/CD|Orquestração da Stack CI/CD"
-FILE_MAP["ansible-cicd/group_vars/all.yml"]="Procedimentos Técnicos|Ansible - CI/CD|Variáveis Globais - CI/CD"
-FILE_MAP["ansible-cicd/playbooks/01-prepare-node.yml"]="Procedimentos Técnicos|Ansible - CI/CD|Preparação do Servidor CI/CD"
-FILE_MAP["ansible-cicd/playbooks/02-install-docker.yml"]="Procedimentos Técnicos|Ansible - CI/CD|Instalação do Docker"
-FILE_MAP["ansible-cicd/playbooks/03-deploy-stack.yml"]="Procedimentos Técnicos|Ansible - CI/CD|Deploy da Stack CI/CD"
-FILE_MAP["ansible-cicd/playbooks/04-configure-runner.yml"]="Procedimentos Técnicos|Ansible - CI/CD|Configuração do Act Runner"
-FILE_MAP["ansible-cicd/playbooks/05-register-netbox.yml"]="Procedimentos Técnicos|Rede e IPAM|Registro CI/CD no NetBox"
-FILE_MAP["ansible-cicd/inventory/generate_inventory.sh"]="Procedimentos Técnicos|Ansible - CI/CD|Geração do Inventário CI/CD"
-FILE_MAP["scripts/netbox-sync-lab-ips.sh"]="Procedimentos Técnicos|Scripts|Sincronização IPAM NetBox"
-FILE_MAP["scripts/netbox-get-available-ips.sh"]="Procedimentos Técnicos|Scripts|Consulta de IPs Disponíveis"
-FILE_MAP["scripts/bookstack-sync-docs.sh"]="Procedimentos Técnicos|Scripts|Sincronização de Documentação"
+FILE_MAP["README.md"]="Procedimentos Técnicos|Visão Geral do Projeto"
+FILE_MAP[".claudecode.md"]="Procedimentos Técnicos|Instruções Globais do Projeto"
+FILE_MAP["README.infraestructure.md"]="Procedimentos Técnicos|Referência de Infraestrutura Proxmox"
+FILE_MAP["terraform-proxmox/main.tf"]="Procedimentos Técnicos|Provisionamento de VMs Kubernetes"
+FILE_MAP["terraform-proxmox/variables.tf"]="Procedimentos Técnicos|Variáveis Terraform - Kubernetes"
+FILE_MAP["terraform-proxmox/outputs.tf"]="Procedimentos Técnicos|Outputs Terraform - Kubernetes"
+FILE_MAP["terraform-proxmox/netbox.tf"]="Procedimentos Técnicos|Integração NetBox - Kubernetes"
+FILE_MAP["terraform-cicd/main.tf"]="Procedimentos Técnicos|Provisionamento VM CI/CD"
+FILE_MAP["terraform-cicd/variables.tf"]="Procedimentos Técnicos|Variáveis Terraform - CI/CD"
+FILE_MAP["terraform-cicd/outputs.tf"]="Procedimentos Técnicos|Outputs Terraform - CI/CD"
+FILE_MAP["terraform-cicd/netbox.tf"]="Procedimentos Técnicos|Integração NetBox - CI/CD"
+FILE_MAP["ansible-k8s/site.yml"]="Procedimentos Técnicos|Orquestração do Cluster Kubernetes"
+FILE_MAP["ansible-k8s/group_vars/all.yml"]="Procedimentos Técnicos|Variáveis Globais - Kubernetes"
+FILE_MAP["ansible-k8s/playbooks/01-prepare-nodes.yml"]="Procedimentos Técnicos|Preparação dos Nós"
+FILE_MAP["ansible-k8s/playbooks/02-install-containerd.yml"]="Procedimentos Técnicos|Instalação do containerd"
+FILE_MAP["ansible-k8s/playbooks/03-install-kubeadm.yml"]="Procedimentos Técnicos|Instalação do kubeadm"
+FILE_MAP["ansible-k8s/playbooks/04-init-master.yml"]="Procedimentos Técnicos|Inicialização do Master"
+FILE_MAP["ansible-k8s/playbooks/05-join-workers.yml"]="Procedimentos Técnicos|Ingresso dos Workers"
+FILE_MAP["ansible-k8s/playbooks/06-register-netbox.yml"]="Procedimentos Técnicos|Registro K8s no NetBox"
+FILE_MAP["ansible-k8s/inventory/generate_inventory.sh"]="Procedimentos Técnicos|Geração do Inventário Dinâmico"
+FILE_MAP["ansible-cicd/site.yml"]="Procedimentos Técnicos|Orquestração da Stack CI/CD"
+FILE_MAP["ansible-cicd/group_vars/all.yml"]="Procedimentos Técnicos|Variáveis Globais - CI/CD"
+FILE_MAP["ansible-cicd/playbooks/01-prepare-node.yml"]="Procedimentos Técnicos|Preparação do Servidor CI/CD"
+FILE_MAP["ansible-cicd/playbooks/02-install-docker.yml"]="Procedimentos Técnicos|Instalação do Docker"
+FILE_MAP["ansible-cicd/playbooks/03-deploy-stack.yml"]="Procedimentos Técnicos|Deploy da Stack CI/CD"
+FILE_MAP["ansible-cicd/playbooks/04-configure-runner.yml"]="Procedimentos Técnicos|Configuração do Act Runner"
+FILE_MAP["ansible-cicd/playbooks/05-register-netbox.yml"]="Procedimentos Técnicos|Registro CI/CD no NetBox"
+FILE_MAP["ansible-cicd/inventory/generate_inventory.sh"]="Procedimentos Técnicos|Geração do Inventário CI/CD"
+FILE_MAP["scripts/netbox-sync-lab-ips.sh"]="Procedimentos Técnicos|Sincronização IPAM NetBox"
+FILE_MAP["scripts/netbox-get-available-ips.sh"]="Procedimentos Técnicos|Consulta de IPs Disponíveis"
+FILE_MAP["scripts/bookstack-sync-docs.sh"]="Procedimentos Técnicos|Sincronização de Documentação"
 
 # =============================================================================
 # UTILITÁRIOS DE LOG
@@ -208,25 +211,25 @@ Opções:
   -f, --force                Forçar re-publicação mesmo sem alterações (ignora state)
       --state-file PATH      Caminho do state file (padrão: scripts/.bookstack-sync-state.json)
       --project-root PATH    Raiz do projeto (padrão: detectada automaticamente)
-      --cleanup-duplicates   Remove pages duplicadas chamadas "Procedimentos Técnicos"
-                             e books duplicados chamados "ADRs" ou "Procedimentos Técnicos"
-                             (mantém o objeto com id menor — o mais antigo). Requer
+      --cleanup-duplicates   Remove shelves duplicados ("ADRs", "Procedimentos Técnicos",
+                             "infra-lab-proxmox") e books duplicados (títulos do FILE_MAP).
+                             Mantém o objeto com id menor (o mais antigo). Requer
                              --url e credenciais configuradas. Combine com -n para
                              dry-run (apenas listar, sem deletar).
   -h, --help                 Exibir este help
 
 Estrutura BookStack criada:
-  Shelf: infra-lab-proxmox
-    ├── Book: ADRs
-    │   └── Chapter: Infraestrutura Geral  (placeholder — ADRs futuros)
-    └── Book: Procedimentos Técnicos
-        ├── Chapter: Visão Geral
-        ├── Chapter: Terraform - Kubernetes
-        ├── Chapter: Terraform - CI/CD
-        ├── Chapter: Ansible - Kubernetes
-        ├── Chapter: Ansible - CI/CD
-        ├── Chapter: Scripts
-        └── Chapter: Rede e IPAM
+  Shelf: "ADRs"
+    └── Book: "<título do ADR>"
+          └── Page: "<título do ADR>"
+
+  Shelf: "Procedimentos Técnicos"
+    └── Book: "Visão Geral do Projeto"
+          └── Page: "Visão Geral do Projeto"
+    └── Book: "Provisionamento de VMs Kubernetes"
+          └── Page: "Provisionamento de VMs Kubernetes"
+    └── Book: "..." (um book por arquivo do FILE_MAP)
+          └── Page: "..." (mesmo nome do book, conteúdo do arquivo)
 
 Variáveis de ambiente:
   BOOKSTACK_URL           URL base do BookStack
@@ -894,8 +897,50 @@ bs_find_page() {
   echo "${found_id:-}"
 }
 
+# bs_find_page_in_book NAME BOOK_ID
+# Retorna o ID da page dentro do book (sem chapter) ou "" se não encontrar.
+bs_find_page_in_book() {
+  local name="$1"
+  local book_id="$2"
+  local api_base="${BOOKSTACK_URL%/}/api"
+
+  local http_code_tmp
+  http_code_tmp="/tmp/bs_http_code_$$.tmp"
+
+  curl "${BS_BASE_ARGS[@]}" \
+    --get \
+    --data-urlencode "filter[name]=${name}" \
+    --data-urlencode "filter[book_id]=${book_id}" \
+    --data-urlencode "count=10" \
+    -w "%{http_code}" \
+    -o "${BS_RESPONSE_TMP}" \
+    "${api_base}/pages" \
+    > "${http_code_tmp}" 2>/dev/null || true
+  BS_LAST_HTTP_CODE=$(cat "${http_code_tmp}" 2>/dev/null || echo "000")
+  rm -f "${http_code_tmp}"
+
+  log_verbose "GET ${api_base}/pages?filter[name]=${name}&filter[book_id]=${book_id}&count=10 → HTTP ${BS_LAST_HTTP_CODE}"
+
+  local response
+  response=$(cat "${BS_RESPONSE_TMP}" 2>/dev/null || echo "{}")
+
+  if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
+    log_warn "Falha ao buscar page '${name}' (book_id=${book_id}) — HTTP ${BS_LAST_HTTP_CODE}"
+    echo ""
+    return 0
+  fi
+
+  local found_id
+  found_id=$(echo "$response" | jq -r \
+    --arg n "$name" --arg bid "$book_id" \
+    '.data[] | select(.name == $n and (.book_id | tostring) == $bid) | .id' 2>/dev/null | head -1 || true)
+
+  echo "${found_id:-}"
+}
+
 # bs_create_page BOOK_ID CHAPTER_ID NAME MARKDOWN_CONTENT
-# Cria nova page. Retorna o ID em stdout.
+# Cria nova page. Se CHAPTER_ID for "" ou "0", cria a page diretamente no book
+# (sem chapter). Retorna o ID em stdout.
 bs_create_page() {
   local book_id="$1"
   local chapter_id="$2"
@@ -904,12 +949,20 @@ bs_create_page() {
   local api_base="${BOOKSTACK_URL%/}/api"
 
   local body
-  body=$(jq -n \
-    --arg bid "$book_id" \
-    --arg cid "$chapter_id" \
-    --arg name "$name" \
-    --arg md "$markdown_content" \
-    '{ book_id: ($bid | tonumber), chapter_id: ($cid | tonumber), name: $name, markdown: $md }')
+  if [[ -n "$chapter_id" ]] && [[ "$chapter_id" != "0" ]]; then
+    body=$(jq -n \
+      --arg bid "$book_id" \
+      --arg cid "$chapter_id" \
+      --arg name "$name" \
+      --arg md "$markdown_content" \
+      '{ book_id: ($bid | tonumber), chapter_id: ($cid | tonumber), name: $name, markdown: $md }')
+  else
+    body=$(jq -n \
+      --arg bid "$book_id" \
+      --arg name "$name" \
+      --arg md "$markdown_content" \
+      '{ book_id: ($bid | tonumber), name: $name, markdown: $md }')
+  fi
 
   local response
   response=$(bs_post "${api_base}/pages" "$body")
@@ -924,9 +977,13 @@ bs_create_page() {
   if [[ "$BS_LAST_HTTP_CODE" == "409" ]] || \
      grep -qi "already exists\|unique\|duplicate" "${BS_RESPONSE_TMP}" 2>/dev/null; then
     log_skip "Page '${name}' já existe (conflict 409) — tratando como skip"
-    # Buscar ID existente
+    # Buscar ID existente: sem chapter, buscar por book_id
     local existing_id
-    existing_id=$(bs_find_page "$name" "$chapter_id")
+    if [[ -n "$chapter_id" ]] && [[ "$chapter_id" != "0" ]]; then
+      existing_id=$(bs_find_page "$name" "$chapter_id")
+    else
+      existing_id=$(bs_find_page_in_book "$name" "$book_id")
+    fi
     echo "${existing_id:-0}"
     return 0
   fi
@@ -967,113 +1024,30 @@ bs_update_page() {
 # =============================================================================
 
 # bs_ensure_structure
-# Cria toda a hierarquia Shelf→Books→Chapters necessária para o projeto.
-# Popula os arrays globais SHELF_IDS, BOOK_IDS, CHAPTER_IDS.
+# Garante que as duas shelves principais existam.
+# Books individuais são criados dinamicamente em sync_file().
 bs_ensure_structure() {
-  log_info "Verificando/criando estrutura BookStack..."
+  log_info "Verificando/criando shelves principais..."
   echo ""
 
-  local shelf_name="infra-lab-proxmox"
   local shelf_id
 
-  # ── Shelf principal
-  shelf_id=$(bs_ensure_shelf "$shelf_name" \
-    "Documentação do laboratório de infraestrutura híbrida Proxmox")
-
+  shelf_id=$(bs_ensure_shelf "Procedimentos Técnicos" \
+    "Procedimentos técnicos do laboratório infra-lab-proxmox")
   if [[ -z "$shelf_id" ]]; then
-    log_error "Não foi possível garantir shelf '${shelf_name}' — abortando"
+    log_error "Não foi possível garantir shelf 'Procedimentos Técnicos' — abortando"
     exit 1
   fi
 
-  # ── Book: ADRs
-  local book_adrs_id
-  book_adrs_id=$(bs_ensure_book "ADRs" "$shelf_id" \
-    "Architecture Decision Records do projeto infra-lab-proxmox")
-
-  if [[ -n "$book_adrs_id" ]] && [[ "$book_adrs_id" != "0" ]]; then
-    # Chapter placeholder para ADRs
-    local ch_infra_id
-    ch_infra_id=$(bs_ensure_chapter "Infraestrutura Geral" "$book_adrs_id" \
-      "ADRs relacionados à infraestrutura geral do laboratório")
-
-    # Criar page placeholder se o chapter foi criado agora
-    if [[ "$DRY_RUN" == "false" ]] && [[ -n "$ch_infra_id" ]] && [[ "$ch_infra_id" != "0" ]]; then
-      local existing_placeholder
-      existing_placeholder=$(bs_find_page "ADRs — Infraestrutura Geral" "$ch_infra_id")
-      if [[ -z "$existing_placeholder" ]]; then
-        local placeholder_md
-        placeholder_md='# ADRs — Infraestrutura Geral
-
-> Esta página é um placeholder gerado automaticamente por `bookstack-sync-docs.sh`.
-
-Nenhum ADR foi documentado ainda para o projeto **infra-lab-proxmox**.
-
-Quando ADRs forem criados (arquivos em diretórios `adr/` ou `decisions/`, ou
-arquivos com padrões como `## Decisão`, `## Contexto`, `## Consequências`,
-`# ADR-`, `Status: Accepted`), eles serão publicados automaticamente neste livro.
-
----
-
-## Formato esperado de ADR
-
-```markdown
-# ADR-001 — Título da Decisão
-
-**Status:** Accepted
-**Data:** YYYY-MM-DD
-**Autor:** nome.sobrenome
-
-## Contexto
-
-Descreva o contexto e o problema que motivou a decisão.
-
-## Decisão
-
-Descreva a decisão tomada.
-
-## Consequências
-
-Descreva os impactos positivos e negativos da decisão.
-```'
-        bs_create_page "$book_adrs_id" "$ch_infra_id" \
-          "ADRs — Infraestrutura Geral" "$placeholder_md" > /dev/null || true
-        log_new "Page placeholder criada em ADRs > Infraestrutura Geral"
-      fi
-    elif [[ "$DRY_RUN" == "true" ]]; then
-      log_dryrun "Criaria page placeholder em ADRs > Infraestrutura Geral"
-    fi
-  fi
-
-  # ── Book: Procedimentos Técnicos
-  local book_pt_id
-  book_pt_id=$(bs_ensure_book "Procedimentos Técnicos" "$shelf_id" \
-    "Procedimentos técnicos, configurações e referências do projeto infra-lab-proxmox")
-
-  if [[ -z "$book_pt_id" ]]; then
-    log_error "Não foi possível garantir book 'Procedimentos Técnicos' — abortando"
+  shelf_id=$(bs_ensure_shelf "ADRs" \
+    "Architecture Decision Records do laboratório infra-lab-proxmox")
+  if [[ -z "$shelf_id" ]]; then
+    log_error "Não foi possível garantir shelf 'ADRs' — abortando"
     exit 1
   fi
-
-  # ── Chapters do book Procedimentos Técnicos
-  local -a pt_chapters=(
-    "Visão Geral|Visão geral e documentação raiz do projeto"
-    "Terraform - Kubernetes|Código Terraform para provisionamento do cluster Kubernetes"
-    "Terraform - CI/CD|Código Terraform para provisionamento da stack CI/CD"
-    "Ansible - Kubernetes|Playbooks Ansible para configuração do cluster Kubernetes"
-    "Ansible - CI/CD|Playbooks Ansible para configuração da stack CI/CD"
-    "Scripts|Scripts de automação e utilitários do laboratório"
-    "Rede e IPAM|Configuração de rede, IPAM NetBox e referências de infraestrutura"
-  )
-
-  local ch_entry ch_name ch_desc ch_id
-  for ch_entry in "${pt_chapters[@]}"; do
-    IFS='|' read -r ch_name ch_desc <<< "$ch_entry"
-    ch_id=$(bs_ensure_chapter "$ch_name" "$book_pt_id" "$ch_desc")
-    log_verbose "Chapter '${ch_name}' resolvido: id=${ch_id}"
-  done
 
   echo ""
-  log_info "Estrutura BookStack verificada/criada com sucesso"
+  log_info "Shelves verificadas/criadas com sucesso"
 }
 
 # =============================================================================
@@ -1148,15 +1122,17 @@ state_get_hash() {
   echo "$STATE_JSON" | jq -r --arg p "$rel_path" '.files[$p].hash // ""'
 }
 
-# state_update RELATIVE_PATH HASH PAGE_ID BOOK_ID CHAPTER_ID PAGE_NAME
+# state_update RELATIVE_PATH HASH PAGE_ID BOOK_ID PAGE_NAME [CHAPTER_ID]
 # Atualiza a entrada de um arquivo no STATE_JSON (em memória).
+# CHAPTER_ID é opcional; quando omitido ou vazio, grava "" para compatibilidade
+# com entradas legadas.
 state_update() {
   local rel_path="$1"
   local hash="$2"
   local page_id="$3"
   local book_id="$4"
-  local chapter_id="$5"
-  local page_name="$6"
+  local page_name="$5"
+  local chapter_id="${6:-}"
 
   local now
   now=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -1173,7 +1149,7 @@ state_update() {
       hash: $h,
       page_id: ($pid | tonumber),
       book_id: ($bid | tonumber),
-      chapter_id: ($cid | tonumber),
+      chapter_id: $cid,
       page_name: $pname,
       last_updated: $ts
     }')
@@ -1289,27 +1265,29 @@ file_to_page_content() {
 # PROCESSAMENTO DE UM ARQUIVO
 # =============================================================================
 
-# process_file REL_PATH BOOK_NAME CHAPTER_NAME PAGE_NAME
-# Orquestra: hash → state lookup → skip / create / update.
-process_file() {
+# sync_file REL_PATH
+# Lê FILE_MAP[REL_PATH] no formato "SHELF|BOOK_TITLE", garante a hierarquia
+# Shelf→Book, busca/cria a Page única dentro do Book e controla hash/state.
+sync_file() {
   local rel_path="$1"
-  local book_name="$2"
-  local chapter_name="$3"
-  local page_name="$4"
+  local mapping="${FILE_MAP[$rel_path]}"
 
-  local abs_path="${PROJECT_ROOT}/${rel_path}"
+  local shelf_name book_title
+  IFS='|' read -r shelf_name book_title <<< "$mapping"
+
+  local full_path="${PROJECT_ROOT}/${rel_path}"
 
   COUNT_FILES=$((COUNT_FILES + 1))
 
   # Verificar se o arquivo existe
-  if [[ ! -f "$abs_path" ]]; then
+  if [[ ! -f "$full_path" ]]; then
     log_warn "Arquivo não encontrado: ${rel_path} — pulando"
     return 0
   fi
 
   # Calcular hash atual
   local current_hash
-  current_hash=$(get_file_hash "$abs_path")
+  current_hash=$(get_file_hash "$full_path")
 
   if [[ -z "$current_hash" ]]; then
     log_warn "Não foi possível calcular hash de ${rel_path} — pulando"
@@ -1331,33 +1309,27 @@ process_file() {
     return 0
   fi
 
-  # Resolver IDs de book e chapter
-  local book_id="${BOOK_IDS[$book_name]:-}"
-  local chapter_id="${CHAPTER_IDS["${book_id}::${chapter_name}"]:-}"
+  # 1. Garantir shelf
+  local shelf_id
+  shelf_id=$(bs_ensure_shelf "$shelf_name" "")
+  if [[ -z "$shelf_id" ]]; then
+    log_error "Não foi possível resolver shelf '${shelf_name}' para ${rel_path}"
+    COUNT_ERRORS=$((COUNT_ERRORS + 1))
+    return 0
+  fi
 
-  # Se não estiver em cache, buscar ou criar
+  # 2. Garantir book dentro da shelf
+  local book_id
+  book_id=$(bs_ensure_book "$book_title" "$shelf_id" "")
   if [[ -z "$book_id" ]]; then
-    local shelf_id="${SHELF_IDS[infra-lab-proxmox]:-0}"
-    book_id=$(bs_ensure_book "$book_name" "$shelf_id" "")
-    if [[ -z "$book_id" ]]; then
-      log_error "Não foi possível resolver book '${book_name}' para ${rel_path}"
-      COUNT_ERRORS=$((COUNT_ERRORS + 1))
-      return 0
-    fi
+    log_error "Não foi possível resolver book '${book_title}' para ${rel_path}"
+    COUNT_ERRORS=$((COUNT_ERRORS + 1))
+    return 0
   fi
 
-  if [[ -z "$chapter_id" ]]; then
-    chapter_id=$(bs_ensure_chapter "$chapter_name" "$book_id" "")
-    if [[ -z "$chapter_id" ]]; then
-      log_error "Não foi possível resolver chapter '${chapter_name}' para ${rel_path}"
-      COUNT_ERRORS=$((COUNT_ERRORS + 1))
-      return 0
-    fi
-  fi
-
-  # Gerar conteúdo da page
-  local page_content
-  page_content=$(file_to_page_content "$abs_path" "$page_name" "$rel_path")
+  # 3. Gerar conteúdo da page
+  local content
+  content=$(file_to_page_content "$full_path" "$book_title" "$rel_path")
 
   # ── Decidir ação: UPDATE ou NEW ──────────────────────────────────────────
 
@@ -1366,19 +1338,18 @@ process_file() {
      [[ "$stored_page_id" != "0" ]]; then
 
     if [[ "$DRY_RUN" == "true" ]]; then
-      log_dryrun "Atualizaria page id=${stored_page_id} '${page_name}' (${rel_path})"
+      log_dryrun "Atualizaria page id=${stored_page_id} '${book_title}' (${rel_path})"
       COUNT_UPDATE=$((COUNT_UPDATE + 1))
       return 0
     fi
 
-    if bs_update_page "$stored_page_id" "$page_name" "$page_content"; then
-      log_update "Page id=${stored_page_id} '${page_name}' atualizada (${rel_path})"
+    if bs_update_page "$stored_page_id" "$book_title" "$content"; then
+      log_update "Page id=${stored_page_id} '${book_title}' atualizada (${rel_path})"
       COUNT_UPDATE=$((COUNT_UPDATE + 1))
       state_update "$rel_path" "$current_hash" "$stored_page_id" \
-        "$book_id" "$chapter_id" "$page_name"
+        "$book_id" "$book_title"
     else
       log_warn "Falha ao atualizar page id=${stored_page_id} — tentando criar nova"
-      # Fallthrough para criação
       stored_page_id=""
     fi
   fi
@@ -1387,50 +1358,50 @@ process_file() {
   if [[ -z "$stored_page_id" ]] || [[ "$stored_page_id" == "0" ]] || \
      [[ "$stored_page_id" == "null" ]]; then
 
-    # Verificar se já existe no BookStack pelo nome
+    # Verificar se já existe no BookStack pelo nome dentro do book
     local existing_id=""
-    if [[ "$chapter_id" != "0" ]]; then
-      existing_id=$(bs_find_page "$page_name" "$chapter_id")
+    if [[ "$book_id" != "0" ]]; then
+      existing_id=$(bs_find_page_in_book "$book_title" "$book_id")
     fi
 
     if [[ -n "$existing_id" ]]; then
       # Existe no BookStack mas não no state → associar e atualizar
-      log_info "Page '${page_name}' encontrada no BookStack (id=${existing_id}) — atualizando"
+      log_info "Page '${book_title}' encontrada no BookStack (id=${existing_id}) — atualizando"
 
       if [[ "$DRY_RUN" == "true" ]]; then
-        log_dryrun "Atualizaria page id=${existing_id} '${page_name}' (${rel_path})"
+        log_dryrun "Atualizaria page id=${existing_id} '${book_title}' (${rel_path})"
         COUNT_UPDATE=$((COUNT_UPDATE + 1))
         return 0
       fi
 
-      if bs_update_page "$existing_id" "$page_name" "$page_content"; then
-        log_update "Page id=${existing_id} '${page_name}' atualizada (${rel_path})"
+      if bs_update_page "$existing_id" "$book_title" "$content"; then
+        log_update "Page id=${existing_id} '${book_title}' atualizada (${rel_path})"
         COUNT_UPDATE=$((COUNT_UPDATE + 1))
         state_update "$rel_path" "$current_hash" "$existing_id" \
-          "$book_id" "$chapter_id" "$page_name"
+          "$book_id" "$book_title"
       else
-        log_error "Falha ao atualizar page id=${existing_id} '${page_name}'"
+        log_error "Falha ao atualizar page id=${existing_id} '${book_title}'"
         COUNT_ERRORS=$((COUNT_ERRORS + 1))
       fi
 
     else
-      # Não existe em nenhum lugar → criar
+      # Não existe em nenhum lugar → criar (page direto no book, sem chapter)
       if [[ "$DRY_RUN" == "true" ]]; then
-        log_dryrun "Criaria page '${page_name}' em '${book_name} > ${chapter_name}' (${rel_path})"
+        log_dryrun "Criaria page '${book_title}' em shelf '${shelf_name}' > book '${book_title}' (${rel_path})"
         COUNT_NEW=$((COUNT_NEW + 1))
         return 0
       fi
 
       local new_page_id
-      new_page_id=$(bs_create_page "$book_id" "$chapter_id" "$page_name" "$page_content")
+      new_page_id=$(bs_create_page "$book_id" "" "$book_title" "$content")
 
       if [[ -n "$new_page_id" ]] && [[ "$new_page_id" != "0" ]]; then
-        log_new "Page id=${new_page_id} '${page_name}' criada em '${book_name} > ${chapter_name}'"
+        log_new "Page id=${new_page_id} '${book_title}' criada em '${shelf_name} > ${book_title}'"
         COUNT_NEW=$((COUNT_NEW + 1))
         state_update "$rel_path" "$current_hash" "$new_page_id" \
-          "$book_id" "$chapter_id" "$page_name"
+          "$book_id" "$book_title"
       else
-        log_error "Falha ao criar page '${page_name}' para ${rel_path}"
+        log_error "Falha ao criar page '${book_title}' para ${rel_path}"
         COUNT_ERRORS=$((COUNT_ERRORS + 1))
       fi
     fi
@@ -1442,12 +1413,12 @@ process_file() {
 # =============================================================================
 
 # scan_and_sync
-# Itera sobre FILE_MAP e chama process_file para cada entrada.
+# Itera sobre FILE_MAP e chama sync_file para cada entrada.
 scan_and_sync() {
   log_info "Iniciando varredura e sincronização de arquivos..."
   echo ""
 
-  local rel_path book_name chapter_name page_name map_value
+  local rel_path map_value
 
   # Iterar sobre o FILE_MAP em ordem determinística
   local -a sorted_keys=()
@@ -1457,11 +1428,12 @@ scan_and_sync() {
 
   for rel_path in "${sorted_keys[@]}"; do
     map_value="${FILE_MAP[$rel_path]}"
-    IFS='|' read -r book_name chapter_name page_name <<< "$map_value"
+    local shelf_name book_title
+    IFS='|' read -r shelf_name book_title <<< "$map_value"
 
-    log_verbose "Processando: ${rel_path} → ${book_name} > ${chapter_name} > ${page_name}"
+    log_verbose "Processando: ${rel_path} → shelf '${shelf_name}' > book '${book_title}'"
 
-    process_file "$rel_path" "$book_name" "$chapter_name" "$page_name" || {
+    sync_file "$rel_path" || {
       log_warn "Falha ao processar ${rel_path} — continuando"
       COUNT_ERRORS=$((COUNT_ERRORS + 1))
     }
@@ -1775,17 +1747,17 @@ bs_cleanup_duplicates() {
 
 # bs_cleanup_duplicate_shelves
 # Busca TODOS os shelves com paginação (sem filter[name] — para contornar o problema
-# de colchetes na query string em proxies nginx). Filtra localmente pelo nome
-# "infra-lab-proxmox". Mantém o shelf com id menor (o mais antigo — provavelmente
-# o legítimo) e deleta os demais. Respeita --dry-run.
+# de colchetes na query string em proxies nginx). Filtra localmente pelos nomes
+# "ADRs", "Procedimentos Técnicos" e "infra-lab-proxmox". Para cada nome, mantém
+# o shelf com id menor (o mais antigo — provavelmente o legítimo) e deleta os
+# demais. Respeita --dry-run.
 #
 # Uso interno: chamado por main() quando CLEANUP_DUPLICATES=true.
 bs_cleanup_duplicate_shelves() {
   local api_base="${BOOKSTACK_URL%/}/api"
-  local shelf_name="infra-lab-proxmox"
 
   log_info "=== Limpeza de shelves duplicados ==="
-  log_info "Nome monitorado: '${shelf_name}'"
+  log_info "Nomes monitorados: 'ADRs', 'Procedimentos Técnicos', 'infra-lab-proxmox'"
 
   # ── Coletar todos os shelves via paginação por offset ───────────────────────
   local all_shelves_tmp
@@ -1842,56 +1814,54 @@ bs_cleanup_duplicate_shelves() {
   total_collected=$(jq 'length' "$all_shelves_tmp" 2>/dev/null || echo "0")
   log_info "Total de shelves coletados: ${total_collected}"
 
-  # ── Filtrar localmente pelo nome exato ──────────────────────────────────────
-  local matched_tmp
-  matched_tmp=$(mktemp /tmp/bs_matched_shelves_$$.XXXXXX.json)
-
-  jq --arg name "$shelf_name" '[.[] | select(.name == $name)]' \
-    "$all_shelves_tmp" > "$matched_tmp" 2>/dev/null || printf '[]' > "$matched_tmp"
-
-  rm -f "$all_shelves_tmp"
-
-  local total_name
-  total_name=$(jq 'length' "$matched_tmp" 2>/dev/null || echo "0")
-  total_name="${total_name:-0}"
-
-  log_info "Shelves com nome '${shelf_name}': ${total_name} encontrado(s)"
-
-  if [[ "$total_name" -le 1 ]]; then
-    log_info "  -> Sem duplicatas para '${shelf_name}'"
-    rm -f "$matched_tmp"
-    echo ""
-    echo "+------------------------------------------------------+"
-    echo "|      Limpeza de Shelves Duplicados -- Resumo         |"
-    echo "+------------------------------------------------------+"
-    printf  "|  Modo                  :  %-27s|\n" "$( [[ "$DRY_RUN" == "true" ]] && echo "DRY-RUN" || echo "EXECUTADO" )"
-    printf  "|  Shelves totais colet. :  %-27s|\n" "$total_collected"
-    printf  "|  Duplicatas detectadas :  %-27s|\n" "0"
-    echo "+------------------------------------------------------+"
-    return 0
-  fi
-
-  # Ordenar por id crescente; manter o de menor id (índice 0), deletar os demais
-  local candidates_shelves
-  candidates_shelves=$(jq -r '
-    sort_by(.id)
-    | .[1:]
-    | .[]
-    | [(.id | tostring), .name, (.slug // "")]
-    | @tsv
-  ' "$matched_tmp" 2>/dev/null || true)
-
-  rm -f "$matched_tmp"
-
+  # ── Processar cada nome monitorado ──────────────────────────────────────────
+  local -a monitored_shelf_names=("ADRs" "Procedimentos Técnicos" "infra-lab-proxmox")
   local grand_found=0
   local grand_deleted=0
   local grand_errors=0
 
-  if [[ -z "$candidates_shelves" ]]; then
-    log_info "  -> Nenhuma duplicata detectada para '${shelf_name}'"
-  else
-    grand_found=$(echo "$candidates_shelves" | wc -l | tr -d ' ')
-    log_info "  -> ${grand_found} duplicata(s) a remover para '${shelf_name}'"
+  local sname
+  for sname in "${monitored_shelf_names[@]}"; do
+
+    local matched_tmp
+    matched_tmp=$(mktemp /tmp/bs_matched_shelves_$$.XXXXXX.json)
+
+    jq --arg name "$sname" '[.[] | select(.name == $name)]' \
+      "$all_shelves_tmp" > "$matched_tmp" 2>/dev/null || printf '[]' > "$matched_tmp"
+
+    local total_name
+    total_name=$(jq 'length' "$matched_tmp" 2>/dev/null || echo "0")
+    total_name="${total_name:-0}"
+
+    log_info "Shelves com nome '${sname}': ${total_name} encontrado(s)"
+
+    if [[ "$total_name" -le 1 ]]; then
+      log_info "  -> Sem duplicatas para '${sname}'"
+      rm -f "$matched_tmp"
+      continue
+    fi
+
+    # Ordenar por id crescente; manter o de menor id (índice 0), deletar os demais
+    local candidates_shelves
+    candidates_shelves=$(jq -r '
+      sort_by(.id)
+      | .[1:]
+      | .[]
+      | [(.id | tostring), .name, (.slug // "")]
+      | @tsv
+    ' "$matched_tmp" 2>/dev/null || true)
+
+    rm -f "$matched_tmp"
+
+    if [[ -z "$candidates_shelves" ]]; then
+      log_info "  -> Nenhuma duplicata detectada para '${sname}'"
+      continue
+    fi
+
+    local count_name
+    count_name=$(echo "$candidates_shelves" | wc -l | tr -d ' ')
+    grand_found=$((grand_found + count_name))
+    log_info "  -> ${count_name} duplicata(s) a remover para '${sname}'"
 
     while IFS=$'\t' read -r dup_id dup_name dup_slug; do
       [[ -z "$dup_id" ]] && continue
@@ -1911,7 +1881,9 @@ bs_cleanup_duplicate_shelves() {
         fi
       fi
     done <<< "$candidates_shelves"
-  fi
+  done
+
+  rm -f "$all_shelves_tmp"
 
   # ── Resumo ──────────────────────────────────────────────────────────────────
   echo ""
@@ -1935,16 +1907,34 @@ bs_cleanup_duplicate_shelves() {
 
 # bs_cleanup_duplicate_books
 # Busca TODOS os books com paginação (sem filter[name] — para contornar o problema
-# de colchetes na query string em proxies nginx). Filtra localmente pelos nomes
-# "ADRs" e "Procedimentos Técnicos". Para cada nome, mantém o book com id menor
-# (o mais antigo — provavelmente o legítimo) e deleta os demais. Respeita --dry-run.
+# de colchetes na query string em proxies nginx). Filtra localmente pelos títulos
+# de books definidos no FILE_MAP (terceiro campo). Para cada nome, mantém o book
+# com id menor (o mais antigo — provavelmente o legítimo) e deleta os demais.
+# Respeita --dry-run.
+# Nota: "ADRs" e "Procedimentos Técnicos" passaram a ser shelves — não são
+# monitorados aqui.
 #
 # Uso interno: chamado por main() quando CLEANUP_DUPLICATES=true.
 bs_cleanup_duplicate_books() {
   local api_base="${BOOKSTACK_URL%/}/api"
 
   log_info "=== Limpeza de books duplicados ==="
-  log_info "Nomes monitorados: 'ADRs', 'Procedimentos Técnicos'"
+
+  # Coletar títulos únicos de books a partir do FILE_MAP
+  local -a monitored_names=()
+  local _rel _map _sn _bt
+  for _rel in "${!FILE_MAP[@]}"; do
+    _map="${FILE_MAP[$_rel]}"
+    IFS='|' read -r _sn _bt <<< "$_map"
+    monitored_names+=("$_bt")
+  done
+  # Deduplicate
+  local -a unique_names=()
+  while IFS= read -r _bt; do
+    unique_names+=("$_bt")
+  done < <(printf '%s\n' "${monitored_names[@]}" | sort -u)
+
+  log_info "Monitorando ${#unique_names[@]} título(s) de book definidos no FILE_MAP"
 
   # ── Coletar todos os books via paginação por offset ─────────────────────────
   local all_books_tmp
@@ -2002,13 +1992,12 @@ bs_cleanup_duplicate_books() {
   log_info "Total de books coletados: ${total_collected}"
 
   # ── Processar cada nome monitorado ──────────────────────────────────────────
-  local -a monitored_names=("ADRs" "Procedimentos Técnicos")
   local grand_found=0
   local grand_deleted=0
   local grand_errors=0
 
   local book_name
-  for book_name in "${monitored_names[@]}"; do
+  for book_name in "${unique_names[@]}"; do
 
     # Filtrar localmente por nome exato
     local matched_tmp
