@@ -114,6 +114,36 @@ ansible-playbook -i inventory/hosts.yml site.yml --tags runner \
 
 ## Changelog
 
+### 2026-04-16 — Integração BookStack (documentação automatizada)
+
+Novo script standalone que varre todo o projeto, categoriza os arquivos como **ADR** ou **Procedimento Técnico** e publica no BookStack pré-existente no laboratório.
+
+#### `scripts/bookstack-sync-docs.sh`
+
+Script Bash invocado manualmente (ou via CI/CD) para sincronizar a documentação do projeto com o BookStack. Funcionalidades principais:
+
+- **Mapeamento estático** de 30 arquivos do projeto para Shelf → Book → Chapter → Page, separando ADRs de Procedimentos Técnicos
+- **Detecção de ADR** por diretório (`adr/`, `decisions/`) ou padrões de conteúdo (`## Decisão`, `# ADR-`, `Status: Accepted`)
+- **Detecção de mudanças via SHA-256**: compara o hash atual do arquivo com o hash salvo em `scripts/.bookstack-sync-state.json`; arquivos inalterados recebem `[SKIP]`, alterados `[UPDATE]` e novos `[NEW]`
+- **Idempotência de estrutura**: `bs_ensure_structure()` cria Shelf, Books e Chapters apenas se não existirem, com cache em memória para evitar GETs repetidos
+- **Formatação automática de conteúdo**: `.md` publicado como markdown puro; `.tf`, `.yml`, `.sh` embrulhados em blocos de código com syntax highlight correto
+- **Flags**: `--dry-run` (simula sem escrever), `--verbose`, `--force` (ignora hash, republica tudo), `--state-file <path>`, `--project-root <path>`
+- Aceita SSL self-signed do laboratório (`INSECURE=true` por padrão)
+
+**Pré-requisitos:**
+
+```bash
+# Exportar credenciais BookStack (nunca versionar)
+export BOOKSTACK_URL="http://10.10.0.6:80"
+export BOOKSTACK_TOKEN_ID="seu-token-id"
+export BOOKSTACK_TOKEN_SECRET="seu-token-secret"
+
+# Executar
+bash scripts/bookstack-sync-docs.sh [--dry-run] [--verbose] [--force]
+```
+
+---
+
 ### 2026-04-14 — Integração NetBox IPAM + CMDB
 
 Toda VM provisionada agora consulta e registra endereços no NetBox antes de aplicar configurações de rede.
