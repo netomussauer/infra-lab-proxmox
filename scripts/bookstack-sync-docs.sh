@@ -261,16 +261,16 @@ print_summary() {
   [[ "$DRY_RUN" == "true" ]] && mode_label="DRY-RUN"
 
   echo ""
-  echo "╔══════════════════════════════════════════════════════╗"
-  printf  "║      BookStack Sync — Resumo da sincronização        ║\n"
-  echo "╠══════════════════════════════════════════════════════╣"
-  printf  "║  Modo                  :  %-27s║\n" "$mode_label"
-  printf  "║  Arquivos processados  :  %-27s║\n" "$COUNT_FILES"
-  printf  "║  Pages novas (NEW)     :  %-27s║\n" "$COUNT_NEW"
-  printf  "║  Pages atualizadas     :  %-27s║\n" "$COUNT_UPDATE"
-  printf  "║  Pages sem alteração   :  %-27s║\n" "$COUNT_SKIP"
-  printf  "║  Erros                 :  %-27s║\n" "$COUNT_ERRORS"
-  echo "╚══════════════════════════════════════════════════════╝"
+  echo "+------------------------------------------------------+"
+  echo "|      BookStack Sync -- Resumo da sincronizacao       |"
+  echo "+------------------------------------------------------+"
+  printf  "|  Modo                  :  %-27s|\n" "$mode_label"
+  printf  "|  Arquivos processados  :  %-27s|\n" "$COUNT_FILES"
+  printf  "|  Pages novas (NEW)     :  %-27s|\n" "$COUNT_NEW"
+  printf  "|  Pages atualizadas     :  %-27s|\n" "$COUNT_UPDATE"
+  printf  "|  Pages sem alteracao   :  %-27s|\n" "$COUNT_SKIP"
+  printf  "|  Erros                 :  %-27s|\n" "$COUNT_ERRORS"
+  echo "+------------------------------------------------------+"
 }
 
 # =============================================================================
@@ -672,10 +672,22 @@ bs_ensure_book() {
     log_skip "Book '${name}' já existe (id=${existing_id})"
     BOOK_IDS["$name"]="$existing_id"
     # Associar ao shelf mesmo que o book já exista (idempotente)
+    # Faz GET do shelf antes de PUT para preservar os books já associados
     if [[ "$DRY_RUN" == "false" ]] && [[ "$shelf_id" != "0" ]]; then
-      local shelf_body
-      shelf_body=$(jq -n --arg bid "$existing_id" '{ books: [($bid | tonumber)] }')
-      bs_put "${api_base}/shelves/${shelf_id}" "$shelf_body" > /dev/null || true
+      local book_id_to_add="$existing_id"
+      local shelf_response
+      shelf_response=$(bs_get "${api_base}/shelves/${shelf_id}" || true)
+      local current_books_ids
+      current_books_ids=$(echo "$shelf_response" | jq -r '[(.books // [])[] | .id]' 2>/dev/null || echo "[]")
+      local already_linked
+      already_linked=$(echo "$current_books_ids" | jq --arg bid "$book_id_to_add" 'map(tostring) | index($bid)' 2>/dev/null)
+      if [[ "$already_linked" == "null" ]]; then
+        local merged_books
+        merged_books=$(echo "$current_books_ids" | jq --arg bid "$book_id_to_add" '. + [($bid | tonumber)]')
+        local shelf_body
+        shelf_body=$(jq -n --argjson books "$merged_books" '{ books: $books }')
+        bs_put "${api_base}/shelves/${shelf_id}" "$shelf_body" > /dev/null || true
+      fi
     fi
     echo "$existing_id"
     return 0
@@ -701,11 +713,22 @@ bs_ensure_book() {
     log_new "Book '${name}' criado (id=${new_id})"
     BOOK_IDS["$name"]="$new_id"
 
-    # Associar ao shelf
+    # Associar ao shelf preservando os books já associados
     if [[ "$shelf_id" != "0" ]]; then
-      local shelf_body
-      shelf_body=$(jq -n --arg bid "$new_id" '{ books: [($bid | tonumber)] }')
-      bs_put "${api_base}/shelves/${shelf_id}" "$shelf_body" > /dev/null || true
+      local book_id_to_add="$new_id"
+      local shelf_response
+      shelf_response=$(bs_get "${api_base}/shelves/${shelf_id}" || true)
+      local current_books_ids
+      current_books_ids=$(echo "$shelf_response" | jq -r '[(.books // [])[] | .id]' 2>/dev/null || echo "[]")
+      local already_linked
+      already_linked=$(echo "$current_books_ids" | jq --arg bid "$book_id_to_add" 'map(tostring) | index($bid)' 2>/dev/null)
+      if [[ "$already_linked" == "null" ]]; then
+        local merged_books
+        merged_books=$(echo "$current_books_ids" | jq --arg bid "$book_id_to_add" '. + [($bid | tonumber)]')
+        local shelf_body
+        shelf_body=$(jq -n --argjson books "$merged_books" '{ books: $books }')
+        bs_put "${api_base}/shelves/${shelf_id}" "$shelf_body" > /dev/null || true
+      fi
     fi
 
     echo "$new_id"
@@ -1213,7 +1236,7 @@ file_to_page_content() {
   case "$ext" in
     md|MD)
       # Markdown: conteúdo direto
-      printf '%s' "$file_content"
+      printf -- '%s' "$file_content"
       ;;
     tf|hcl)
       # Terraform/HCL: envolve em bloco de código
@@ -1223,7 +1246,7 @@ file_to_page_content() {
       printf '> Gerenciado por: bookstack-sync-docs.sh\n\n'
       printf '---\n\n'
       printf '```hcl\n'
-      printf '%s\n' "$file_content"
+      printf -- '%s\n' "$file_content"
       printf '```\n'
       ;;
     yml|yaml|YAML|YML)
@@ -1234,7 +1257,7 @@ file_to_page_content() {
       printf '> Gerenciado por: bookstack-sync-docs.sh\n\n'
       printf '---\n\n'
       printf '```yaml\n'
-      printf '%s\n' "$file_content"
+      printf -- '%s\n' "$file_content"
       printf '```\n'
       ;;
     sh|bash)
@@ -1245,7 +1268,7 @@ file_to_page_content() {
       printf '> Gerenciado por: bookstack-sync-docs.sh\n\n'
       printf '---\n\n'
       printf '```bash\n'
-      printf '%s\n' "$file_content"
+      printf -- '%s\n' "$file_content"
       printf '```\n'
       ;;
     *)
@@ -1256,7 +1279,7 @@ file_to_page_content() {
       printf '> Gerenciado por: bookstack-sync-docs.sh\n\n'
       printf '---\n\n'
       printf '```\n'
-      printf '%s\n' "$file_content"
+      printf -- '%s\n' "$file_content"
       printf '```\n'
       ;;
   esac
@@ -1731,20 +1754,180 @@ bs_cleanup_duplicates() {
   done <<< "$candidates"
 
   echo ""
-  echo "╔══════════════════════════════════════════════════════╗"
-  printf  "║      Limpeza de Duplicatas — Resumo                  ║\n"
-  echo "╠══════════════════════════════════════════════════════╣"
-  printf  "║  Modo                  :  %-27s║\n" "$( [[ "$DRY_RUN" == "true" ]] && echo "DRY-RUN" || echo "EXECUTADO" )"
-  printf  "║  Total coletadas       :  %-27s║\n" "$total_collected"
-  printf  "║  Com nome correspondente:  %-26s║\n" "$total"
-  printf  "║  Duplicatas detectadas :  %-27s║\n" "$count_found"
+  echo "+------------------------------------------------------+"
+  echo "|      Limpeza de Duplicatas -- Resumo                 |"
+  echo "+------------------------------------------------------+"
+  printf  "|  Modo                  :  %-27s|\n" "$( [[ "$DRY_RUN" == "true" ]] && echo "DRY-RUN" || echo "EXECUTADO" )"
+  printf  "|  Total coletadas       :  %-27s|\n" "$total_collected"
+  printf  "|  Com nome correspondente: %-27s|\n" "$total"
+  printf  "|  Duplicatas detectadas :  %-27s|\n" "$count_found"
   if [[ "$DRY_RUN" == "false" ]]; then
-    printf  "║  Removidas             :  %-27s║\n" "$count_deleted"
-    printf  "║  Erros na remoção      :  %-27s║\n" "$count_errors"
+    printf  "|  Removidas             :  %-27s|\n" "$count_deleted"
+    printf  "|  Erros na remocao      :  %-27s|\n" "$count_errors"
   fi
-  echo "╚══════════════════════════════════════════════════════╝"
+  echo "+------------------------------------------------------+"
 
   if [[ "$count_errors" -gt 0 ]]; then
+    return 1
+  fi
+  return 0
+}
+
+# bs_cleanup_duplicate_shelves
+# Busca TODOS os shelves com paginação (sem filter[name] — para contornar o problema
+# de colchetes na query string em proxies nginx). Filtra localmente pelo nome
+# "infra-lab-proxmox". Mantém o shelf com id menor (o mais antigo — provavelmente
+# o legítimo) e deleta os demais. Respeita --dry-run.
+#
+# Uso interno: chamado por main() quando CLEANUP_DUPLICATES=true.
+bs_cleanup_duplicate_shelves() {
+  local api_base="${BOOKSTACK_URL%/}/api"
+  local shelf_name="infra-lab-proxmox"
+
+  log_info "=== Limpeza de shelves duplicados ==="
+  log_info "Nome monitorado: '${shelf_name}'"
+
+  # ── Coletar todos os shelves via paginação por offset ───────────────────────
+  local all_shelves_tmp
+  all_shelves_tmp=$(mktemp /tmp/bs_all_shelves_$$.XXXXXX.json)
+  printf '[]' > "$all_shelves_tmp"
+
+  local page_size=500
+  local offset=0
+  local batch_count=0
+  local http_errors=0
+
+  log_info "Coletando todos os shelves com paginação (page_size=${page_size})..."
+
+  while true; do
+    local batch
+    batch=$(bs_get "${api_base}/shelves?count=${page_size}&offset=${offset}" || true)
+
+    if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
+      log_error "Falha ao listar shelves (offset=${offset}) — HTTP ${BS_LAST_HTTP_CODE}"
+      http_errors=$((http_errors + 1))
+      break
+    fi
+
+    batch_count=$(echo "$batch" | jq '(.data // []) | length' 2>/dev/null || echo "0")
+    batch_count="${batch_count:-0}"
+
+    log_verbose "Batch offset=${offset}: ${batch_count} shelf(ves) recebido(s)"
+
+    [[ "$batch_count" -eq 0 ]] && break
+
+    local merged
+    merged=$(jq -s '.[0] + (.[1].data // [])' \
+      "$all_shelves_tmp" \
+      <(echo "$batch") 2>/dev/null || true)
+
+    if [[ -z "$merged" ]]; then
+      log_error "Falha ao mesclar batch de shelves (offset=${offset}) — abortando paginação"
+      http_errors=$((http_errors + 1))
+      break
+    fi
+
+    printf '%s' "$merged" > "$all_shelves_tmp"
+    offset=$((offset + page_size))
+    [[ "$batch_count" -lt "$page_size" ]] && break
+  done
+
+  if [[ "$http_errors" -gt 0 ]]; then
+    log_error "Erros durante a coleta de shelves — abortando limpeza de shelves"
+    rm -f "$all_shelves_tmp"
+    return 1
+  fi
+
+  local total_collected
+  total_collected=$(jq 'length' "$all_shelves_tmp" 2>/dev/null || echo "0")
+  log_info "Total de shelves coletados: ${total_collected}"
+
+  # ── Filtrar localmente pelo nome exato ──────────────────────────────────────
+  local matched_tmp
+  matched_tmp=$(mktemp /tmp/bs_matched_shelves_$$.XXXXXX.json)
+
+  jq --arg name "$shelf_name" '[.[] | select(.name == $name)]' \
+    "$all_shelves_tmp" > "$matched_tmp" 2>/dev/null || printf '[]' > "$matched_tmp"
+
+  rm -f "$all_shelves_tmp"
+
+  local total_name
+  total_name=$(jq 'length' "$matched_tmp" 2>/dev/null || echo "0")
+  total_name="${total_name:-0}"
+
+  log_info "Shelves com nome '${shelf_name}': ${total_name} encontrado(s)"
+
+  if [[ "$total_name" -le 1 ]]; then
+    log_info "  -> Sem duplicatas para '${shelf_name}'"
+    rm -f "$matched_tmp"
+    echo ""
+    echo "+------------------------------------------------------+"
+    echo "|      Limpeza de Shelves Duplicados -- Resumo         |"
+    echo "+------------------------------------------------------+"
+    printf  "|  Modo                  :  %-27s|\n" "$( [[ "$DRY_RUN" == "true" ]] && echo "DRY-RUN" || echo "EXECUTADO" )"
+    printf  "|  Shelves totais colet. :  %-27s|\n" "$total_collected"
+    printf  "|  Duplicatas detectadas :  %-27s|\n" "0"
+    echo "+------------------------------------------------------+"
+    return 0
+  fi
+
+  # Ordenar por id crescente; manter o de menor id (índice 0), deletar os demais
+  local candidates_shelves
+  candidates_shelves=$(jq -r '
+    sort_by(.id)
+    | .[1:]
+    | .[]
+    | [(.id | tostring), .name, (.slug // "")]
+    | @tsv
+  ' "$matched_tmp" 2>/dev/null || true)
+
+  rm -f "$matched_tmp"
+
+  local grand_found=0
+  local grand_deleted=0
+  local grand_errors=0
+
+  if [[ -z "$candidates_shelves" ]]; then
+    log_info "  -> Nenhuma duplicata detectada para '${shelf_name}'"
+  else
+    grand_found=$(echo "$candidates_shelves" | wc -l | tr -d ' ')
+    log_info "  -> ${grand_found} duplicata(s) a remover para '${shelf_name}'"
+
+    while IFS=$'\t' read -r dup_id dup_name dup_slug; do
+      [[ -z "$dup_id" ]] && continue
+
+      if [[ "$DRY_RUN" == "true" ]]; then
+        log_dryrun "Removeria shelf id=${dup_id} '${dup_name}' (slug=${dup_slug})"
+      else
+        log_info "Removendo shelf id=${dup_id} '${dup_name}' (slug=${dup_slug})"
+        bs_delete "${api_base}/shelves/${dup_id}" || true
+
+        if [[ "$BS_LAST_HTTP_CODE" == "204" ]] || [[ "$BS_LAST_HTTP_CODE" == "200" ]]; then
+          log_update "Shelf id=${dup_id} removido com sucesso"
+          grand_deleted=$((grand_deleted + 1))
+        else
+          log_error "Falha ao remover shelf id=${dup_id} — HTTP ${BS_LAST_HTTP_CODE}"
+          grand_errors=$((grand_errors + 1))
+        fi
+      fi
+    done <<< "$candidates_shelves"
+  fi
+
+  # ── Resumo ──────────────────────────────────────────────────────────────────
+  echo ""
+  echo "+------------------------------------------------------+"
+  echo "|      Limpeza de Shelves Duplicados -- Resumo         |"
+  echo "+------------------------------------------------------+"
+  printf  "|  Modo                  :  %-27s|\n" "$( [[ "$DRY_RUN" == "true" ]] && echo "DRY-RUN" || echo "EXECUTADO" )"
+  printf  "|  Shelves totais colet. :  %-27s|\n" "$total_collected"
+  printf  "|  Duplicatas detectadas :  %-27s|\n" "$grand_found"
+  if [[ "$DRY_RUN" == "false" ]]; then
+    printf  "|  Removidos             :  %-27s|\n" "$grand_deleted"
+    printf  "|  Erros na remocao      :  %-27s|\n" "$grand_errors"
+  fi
+  echo "+------------------------------------------------------+"
+
+  if [[ "$grand_errors" -gt 0 ]]; then
     return 1
   fi
   return 0
@@ -1893,17 +2076,17 @@ bs_cleanup_duplicate_books() {
 
   # ── Resumo ──────────────────────────────────────────────────────────────────
   echo ""
-  echo "╔══════════════════════════════════════════════════════╗"
-  printf  "║      Limpeza de Books Duplicados — Resumo            ║\n"
-  echo "╠══════════════════════════════════════════════════════╣"
-  printf  "║  Modo                  :  %-27s║\n" "$( [[ "$DRY_RUN" == "true" ]] && echo "DRY-RUN" || echo "EXECUTADO" )"
-  printf  "║  Books totais coletados:  %-27s║\n" "$total_collected"
-  printf  "║  Duplicatas detectadas :  %-27s║\n" "$grand_found"
+  echo "+------------------------------------------------------+"
+  echo "|      Limpeza de Books Duplicados -- Resumo           |"
+  echo "+------------------------------------------------------+"
+  printf  "|  Modo                  :  %-27s|\n" "$( [[ "$DRY_RUN" == "true" ]] && echo "DRY-RUN" || echo "EXECUTADO" )"
+  printf  "|  Books totais coletados:  %-27s|\n" "$total_collected"
+  printf  "|  Duplicatas detectadas :  %-27s|\n" "$grand_found"
   if [[ "$DRY_RUN" == "false" ]]; then
-    printf  "║  Removidos             :  %-27s║\n" "$grand_deleted"
-    printf  "║  Erros na remoção      :  %-27s║\n" "$grand_errors"
+    printf  "|  Removidos             :  %-27s|\n" "$grand_deleted"
+    printf  "|  Erros na remocao      :  %-27s|\n" "$grand_errors"
   fi
-  echo "╚══════════════════════════════════════════════════════╝"
+  echo "+------------------------------------------------------+"
 
   if [[ "$grand_errors" -gt 0 ]]; then
     return 1
@@ -1939,8 +2122,9 @@ main() {
     detect_project_root
     # Passa "false" para não criar estrutura BookStack durante o cleanup
     validate_config "false"
-    bs_cleanup_duplicates "Procedimentos Técnicos"
+    bs_cleanup_duplicate_shelves
     bs_cleanup_duplicate_books
+    bs_cleanup_duplicates "Procedimentos Técnicos"
     exit $?
   fi
 
