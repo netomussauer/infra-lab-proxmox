@@ -687,8 +687,13 @@ bs_ensure_book() {
       if [[ "$already_linked" == "null" ]]; then
         local merged_books
         merged_books=$(echo "$current_books_ids" | jq --arg bid "$book_id_to_add" '. + [($bid | tonumber)]')
+        local shelf_name_val
+        shelf_name_val=$(echo "$shelf_response" | jq -r '.name // ""')
         local shelf_body
-        shelf_body=$(jq -n --argjson books "$merged_books" '{ books: $books }')
+        shelf_body=$(jq -n \
+          --arg name "$shelf_name_val" \
+          --argjson books "$merged_books" \
+          '{ name: $name, books: $books }')
         bs_put "${api_base}/shelves/${shelf_id}" "$shelf_body" > /dev/null || true
       fi
     fi
@@ -728,8 +733,13 @@ bs_ensure_book() {
       if [[ "$already_linked" == "null" ]]; then
         local merged_books
         merged_books=$(echo "$current_books_ids" | jq --arg bid "$book_id_to_add" '. + [($bid | tonumber)]')
+        local shelf_name_val
+        shelf_name_val=$(echo "$shelf_response" | jq -r '.name // ""')
         local shelf_body
-        shelf_body=$(jq -n --argjson books "$merged_books" '{ books: $books }')
+        shelf_body=$(jq -n \
+          --arg name "$shelf_name_val" \
+          --argjson books "$merged_books" \
+          '{ name: $name, books: $books }')
         bs_put "${api_base}/shelves/${shelf_id}" "$shelf_body" > /dev/null || true
       fi
     fi
@@ -955,13 +965,13 @@ bs_create_page() {
       --arg cid "$chapter_id" \
       --arg name "$name" \
       --arg md "$markdown_content" \
-      '{ book_id: ($bid | tonumber), chapter_id: ($cid | tonumber), name: $name, markdown: $md }')
+      '{ book_id: ($bid | tonumber), chapter_id: ($cid | tonumber), name: $name, markdown: $md, html: ("<pre>" + $md + "</pre>") }')
   else
     body=$(jq -n \
       --arg bid "$book_id" \
       --arg name "$name" \
       --arg md "$markdown_content" \
-      '{ book_id: ($bid | tonumber), name: $name, markdown: $md }')
+      '{ book_id: ($bid | tonumber), name: $name, markdown: $md, html: ("<pre>" + $md + "</pre>") }')
   fi
 
   local response
@@ -1006,7 +1016,7 @@ bs_update_page() {
   body=$(jq -n \
     --arg name "$name" \
     --arg md "$markdown_content" \
-    '{ name: $name, markdown: $md }')
+    '{ name: $name, markdown: $md, html: ("<pre>" + $md + "</pre>") }')
 
   bs_put "${api_base}/pages/${page_id}" "$body" > /dev/null
 
@@ -1287,7 +1297,8 @@ sync_file() {
   local shelf_name book_title
   IFS='|' read -r shelf_name book_title <<< "$mapping"
 
-  local full_path="${PROJECT_ROOT}/${rel_path}"
+  local full_path
+  full_path="${PROJECT_ROOT%/}/${rel_path}"
 
   COUNT_FILES=$((COUNT_FILES + 1))
 
@@ -1342,6 +1353,12 @@ sync_file() {
   # 3. Gerar conteúdo da page
   local content
   content=$(file_to_page_content "$full_path" "$book_title" "$rel_path")
+
+  if [[ -z "$content" ]]; then
+    log_warn "${rel_path}: conteúdo gerado está vazio — arquivo pode não ter sido encontrado ou estar vazio"
+    # Não abortar — deixar criar página vazia com fallback
+  fi
+  log_verbose "${rel_path}: content size = ${#content} bytes"
 
   # ── Decidir ação: UPDATE ou NEW ──────────────────────────────────────────
 
