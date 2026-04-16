@@ -1514,9 +1514,12 @@ detect_project_root() {
 # =============================================================================
 
 # bs_cleanup_duplicates
-# Consulta todas as pages com o nome "Procedimento Técnico" (ou qualquer
-# nome passado via $1), mantém apenas a mais recente por updated_at e
-# deleta as demais. Respeita --dry-run.
+# Busca TODAS as páginas com paginação (offset incremental), filtra localmente
+# pelo nome exato passado via $1, mantém apenas a mais recente por updated_at
+# dentro de cada chapter_id e deleta as demais. Respeita --dry-run.
+#
+# A busca por offset evita o problema de filter[name] com caracteres acentuados
+# e de colchetes não codificados que fazem a API retornar 0 resultados.
 #
 # Uso interno: chamado por main() quando CLEANUP_DUPLICATES=true.
 bs_cleanup_duplicates() {
@@ -1526,42 +1529,96 @@ bs_cleanup_duplicates() {
   log_info "=== Limpeza de páginas duplicadas ==="
   log_info "Buscando páginas com nome: '${page_name}'"
 
-  # URL-encode o nome da página para o filtro (espaços → %20, ç → %C3%A7, etc.)
-  local name_encoded
-  name_encoded=$(printf '%s' "$page_name" | \
-    python3 -c "import sys, urllib.parse; sys.stdout.write(urllib.parse.quote(sys.stdin.read().rstrip('\n')))" \
-    2>/dev/null \
-    || printf '%s' "$page_name" | sed 's/ /%20/g; s/ç/%C3%A7/g; s/é/%C3%A9/g; s/ê/%C3%AA/g; s/ã/%C3%A3/g; s/â/%C3%A2/g; s/ó/%C3%B3/g; s/í/%C3%AD/g; s/á/%C3%A1/g; s/ú/%C3%BA/g')
+  # ── Acumulação de todas as páginas via paginação por offset ────────────────
+  # BS_RESPONSE_TMP é sobrescrito a cada bs_get; usamos um arquivo separado
+  # para acumular o array JSON crescente entre as iterações.
+  local all_pages_tmp
+  all_pages_tmp=$(mktemp /tmp/bs_all_pages_$$.XXXXXX.json)
+  # Inicializa com array vazio
+  printf '[]' > "$all_pages_tmp"
 
-  # Buscar todas as páginas com esse nome (até 500 resultados)
-  local response
-  response=$(bs_get "${api_base}/pages?filter[name]=${name_encoded}&count=500" || true)
+  local page_size=500
+  local offset=0
+  local batch_count=0
+  local http_errors=0
 
-  if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
-    log_error "Falha ao listar páginas — HTTP ${BS_LAST_HTTP_CODE}"
+  log_info "Coletando todas as páginas com paginação (page_size=${page_size})..."
+
+  while true; do
+    local batch
+    batch=$(bs_get "${api_base}/pages?count=${page_size}&offset=${offset}" || true)
+
+    if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
+      log_error "Falha ao listar páginas (offset=${offset}) — HTTP ${BS_LAST_HTTP_CODE}"
+      http_errors=$((http_errors + 1))
+      break
+    fi
+
+    batch_count=$(echo "$batch" | jq '(.data // []) | length' 2>/dev/null || echo "0")
+    batch_count="${batch_count:-0}"
+
+    log_verbose "Batch offset=${offset}: ${batch_count} página(s) recebidas"
+
+    [[ "$batch_count" -eq 0 ]] && break
+
+    # Concatenar .data do batch ao array acumulado usando arquivo temporário.
+    # jq lê o array atual do arquivo e o batch da variável; produz novo array.
+    local merged
+    merged=$(jq -s '.[0] + (.[1].data // [])' \
+      "$all_pages_tmp" \
+      <(echo "$batch") 2>/dev/null || true)
+
+    if [[ -z "$merged" ]]; then
+      log_error "Falha ao mesclar batch (offset=${offset}) — abortando paginação"
+      http_errors=$((http_errors + 1))
+      break
+    fi
+
+    printf '%s' "$merged" > "$all_pages_tmp"
+
+    offset=$((offset + page_size))
+
+    # Se o batch veio com menos itens que page_size, é a última página
+    [[ "$batch_count" -lt "$page_size" ]] && break
+  done
+
+  if [[ "$http_errors" -gt 0 ]]; then
+    log_error "Erros durante a coleta de páginas — abortando limpeza"
+    rm -f "$all_pages_tmp"
     return 1
   fi
 
-  # Extrair total de resultados encontrados
-  # Protege contra .data ausente ou null com // 0
+  local total_collected
+  total_collected=$(jq 'length' "$all_pages_tmp" 2>/dev/null || echo "0")
+  log_info "Total de páginas coletadas: ${total_collected}"
+
+  # ── Filtro local por nome exato ────────────────────────────────────────────
+  local matched_tmp
+  matched_tmp=$(mktemp /tmp/bs_matched_$$.XXXXXX.json)
+
+  jq --arg name "$page_name" '[.[] | select(.name == $name)]' \
+    "$all_pages_tmp" > "$matched_tmp" 2>/dev/null || printf '[]' > "$matched_tmp"
+
+  rm -f "$all_pages_tmp"
+
   local total
-  total=$(echo "$response" | jq '(.data // []) | length' 2>/dev/null || echo "0")
+  total=$(jq 'length' "$matched_tmp" 2>/dev/null || echo "0")
   total="${total:-0}"
 
   if [[ "$total" -eq 0 ]]; then
     log_info "Nenhuma página encontrada com o nome '${page_name}' — nada a fazer"
+    rm -f "$matched_tmp"
     return 0
   fi
 
   log_info "Encontradas ${total} página(s) com esse nome"
 
-  # Agrupar por chapter_id: para cada grupo, manter a mais recente (maior updated_at)
-  # e coletar as demais como candidatas à remoção.
+  # ── Agrupar por chapter_id, manter mais recente, coletar duplicatas ────────
   # Protege campos numéricos com // 0 e strings com // "" para evitar
   # "Invalid numeric literal" caso o servidor retorne null nesses campos.
   local candidates
-  candidates=$(echo "$response" | jq -r '
-    [(.data // [])[] | select(.id != null) | {
+  candidates=$(jq -r '
+    [.[] | select(.id != null) | {
       id: (.id // 0),
       name: (.name // ""),
       chapter_id: (.chapter_id // 0),
@@ -1579,7 +1636,9 @@ bs_cleanup_duplicates() {
     | .[]
     | [(.id | tostring), .name, (.chapter_id | tostring), (.book_id | tostring), .updated_at]
     | @tsv
-  ' 2>/dev/null || true)
+  ' "$matched_tmp" 2>/dev/null || true)
+
+  rm -f "$matched_tmp"
 
   if [[ -z "$candidates" ]]; then
     log_info "Nenhuma duplicata encontrada — todas as ${total} página(s) são únicas por chapter"
@@ -1621,7 +1680,8 @@ bs_cleanup_duplicates() {
   printf  "║      Limpeza de Duplicatas — Resumo                  ║\n"
   echo "╠══════════════════════════════════════════════════════╣"
   printf  "║  Modo                  :  %-27s║\n" "$( [[ "$DRY_RUN" == "true" ]] && echo "DRY-RUN" || echo "EXECUTADO" )"
-  printf  "║  Total encontradas     :  %-27s║\n" "$total"
+  printf  "║  Total coletadas       :  %-27s║\n" "$total_collected"
+  printf  "║  Com nome correspondente:  %-26s║\n" "$total"
   printf  "║  Duplicatas detectadas :  %-27s║\n" "$count_found"
   if [[ "$DRY_RUN" == "false" ]]; then
     printf  "║  Removidas             :  %-27s║\n" "$count_deleted"
