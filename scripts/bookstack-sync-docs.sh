@@ -208,8 +208,9 @@ Opções:
   -f, --force                Forçar re-publicação mesmo sem alterações (ignora state)
       --state-file PATH      Caminho do state file (padrão: scripts/.bookstack-sync-state.json)
       --project-root PATH    Raiz do projeto (padrão: detectada automaticamente)
-      --cleanup-duplicates   Remove pages duplicadas chamadas "Procedimento Técnico"
-                             (mantém apenas a mais recente por updated_at). Requer
+      --cleanup-duplicates   Remove pages duplicadas chamadas "Procedimentos Técnicos"
+                             e books duplicados chamados "ADRs" ou "Procedimentos Técnicos"
+                             (mantém o objeto com id menor — o mais antigo). Requer
                              --url e credenciais configuradas. Combine com -n para
                              dry-run (apenas listar, sem deletar).
   -h, --help                 Exibir este help
@@ -246,7 +247,7 @@ Exemplos:
   # Listar duplicatas sem remover (dry-run)
   ./${SCRIPT_NAME} --cleanup-duplicates -n --url https://10.10.0.6:8080
 
-  # Remover páginas duplicadas "Procedimento Técnico"
+  # Remover pages duplicadas e books duplicados
   ./${SCRIPT_NAME} --cleanup-duplicates --url https://10.10.0.6:8080
 EOF
 }
@@ -519,11 +520,24 @@ bs_find_shelf() {
   local name="$1"
   local api_base="${BOOKSTACK_URL%/}/api"
 
-  local name_encoded
-  name_encoded=$(printf '%s' "$name" | sed 's/ /%20/g; s/|/%7C/g')
+  local http_code_tmp
+  http_code_tmp="/tmp/bs_http_code_$$.tmp"
+
+  curl "${BS_BASE_ARGS[@]}" \
+    --get \
+    --data-urlencode "filter[name]=${name}" \
+    --data-urlencode "count=1" \
+    -w "%{http_code}" \
+    -o "${BS_RESPONSE_TMP}" \
+    "${api_base}/shelves" \
+    > "${http_code_tmp}" 2>/dev/null || true
+  BS_LAST_HTTP_CODE=$(cat "${http_code_tmp}" 2>/dev/null || echo "000")
+  rm -f "${http_code_tmp}"
+
+  log_verbose "GET ${api_base}/shelves?filter[name]=${name}&count=1 → HTTP ${BS_LAST_HTTP_CODE}"
 
   local response
-  response=$(bs_get "${api_base}/shelves?filter[name]=${name_encoded}&count=1" || true)
+  response=$(cat "${BS_RESPONSE_TMP}" 2>/dev/null || echo "{}")
 
   if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
     log_warn "Falha ao buscar shelf '${name}' — HTTP ${BS_LAST_HTTP_CODE}"
@@ -605,11 +619,24 @@ bs_find_book() {
   local name="$1"
   local api_base="${BOOKSTACK_URL%/}/api"
 
-  local name_encoded
-  name_encoded=$(printf '%s' "$name" | sed 's/ /%20/g; s/|/%7C/g')
+  local http_code_tmp
+  http_code_tmp="/tmp/bs_http_code_$$.tmp"
+
+  curl "${BS_BASE_ARGS[@]}" \
+    --get \
+    --data-urlencode "filter[name]=${name}" \
+    --data-urlencode "count=1" \
+    -w "%{http_code}" \
+    -o "${BS_RESPONSE_TMP}" \
+    "${api_base}/books" \
+    > "${http_code_tmp}" 2>/dev/null || true
+  BS_LAST_HTTP_CODE=$(cat "${http_code_tmp}" 2>/dev/null || echo "000")
+  rm -f "${http_code_tmp}"
+
+  log_verbose "GET ${api_base}/books?filter[name]=${name}&count=1 → HTTP ${BS_LAST_HTTP_CODE}"
 
   local response
-  response=$(bs_get "${api_base}/books?filter[name]=${name_encoded}&count=1" || true)
+  response=$(cat "${BS_RESPONSE_TMP}" 2>/dev/null || echo "{}")
 
   if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
     log_warn "Falha ao buscar book '${name}' — HTTP ${BS_LAST_HTTP_CODE}"
@@ -706,11 +733,25 @@ bs_find_chapter() {
   local book_id="$2"
   local api_base="${BOOKSTACK_URL%/}/api"
 
-  local name_encoded
-  name_encoded=$(printf '%s' "$name" | sed 's/ /%20/g; s/|/%7C/g; s/-/%2D/g')
+  local http_code_tmp
+  http_code_tmp="/tmp/bs_http_code_$$.tmp"
+
+  curl "${BS_BASE_ARGS[@]}" \
+    --get \
+    --data-urlencode "filter[name]=${name}" \
+    --data-urlencode "filter[book_id]=${book_id}" \
+    --data-urlencode "count=10" \
+    -w "%{http_code}" \
+    -o "${BS_RESPONSE_TMP}" \
+    "${api_base}/chapters" \
+    > "${http_code_tmp}" 2>/dev/null || true
+  BS_LAST_HTTP_CODE=$(cat "${http_code_tmp}" 2>/dev/null || echo "000")
+  rm -f "${http_code_tmp}"
+
+  log_verbose "GET ${api_base}/chapters?filter[name]=${name}&filter[book_id]=${book_id}&count=10 → HTTP ${BS_LAST_HTTP_CODE}"
 
   local response
-  response=$(bs_get "${api_base}/chapters?filter[name]=${name_encoded}&filter[book_id]=${book_id}&count=10" || true)
+  response=$(cat "${BS_RESPONSE_TMP}" 2>/dev/null || echo "{}")
 
   if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
     log_warn "Falha ao buscar chapter '${name}' (book_id=${book_id}) — HTTP ${BS_LAST_HTTP_CODE}"
@@ -796,11 +837,25 @@ bs_find_page() {
   local chapter_id="$2"
   local api_base="${BOOKSTACK_URL%/}/api"
 
-  local name_encoded
-  name_encoded=$(printf '%s' "$name" | sed 's/ /%20/g; s/|/%7C/g')
+  local http_code_tmp
+  http_code_tmp="/tmp/bs_http_code_$$.tmp"
+
+  curl "${BS_BASE_ARGS[@]}" \
+    --get \
+    --data-urlencode "filter[name]=${name}" \
+    --data-urlencode "filter[chapter_id]=${chapter_id}" \
+    --data-urlencode "count=10" \
+    -w "%{http_code}" \
+    -o "${BS_RESPONSE_TMP}" \
+    "${api_base}/pages" \
+    > "${http_code_tmp}" 2>/dev/null || true
+  BS_LAST_HTTP_CODE=$(cat "${http_code_tmp}" 2>/dev/null || echo "000")
+  rm -f "${http_code_tmp}"
+
+  log_verbose "GET ${api_base}/pages?filter[name]=${name}&filter[chapter_id]=${chapter_id}&count=10 → HTTP ${BS_LAST_HTTP_CODE}"
 
   local response
-  response=$(bs_get "${api_base}/pages?filter[name]=${name_encoded}&filter[chapter_id]=${chapter_id}&count=10" || true)
+  response=$(cat "${BS_RESPONSE_TMP}" 2>/dev/null || echo "{}")
 
   if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
     log_warn "Falha ao buscar page '${name}' (chapter_id=${chapter_id}) — HTTP ${BS_LAST_HTTP_CODE}"
@@ -1523,7 +1578,7 @@ detect_project_root() {
 #
 # Uso interno: chamado por main() quando CLEANUP_DUPLICATES=true.
 bs_cleanup_duplicates() {
-  local page_name="${1:-Procedimento Técnico}"
+  local page_name="${1:-Procedimentos Técnicos}"
   local api_base="${BOOKSTACK_URL%/}/api"
 
   log_info "=== Limpeza de páginas duplicadas ==="
@@ -1695,6 +1750,167 @@ bs_cleanup_duplicates() {
   return 0
 }
 
+# bs_cleanup_duplicate_books
+# Busca TODOS os books com paginação (sem filter[name] — para contornar o problema
+# de colchetes na query string em proxies nginx). Filtra localmente pelos nomes
+# "ADRs" e "Procedimentos Técnicos". Para cada nome, mantém o book com id menor
+# (o mais antigo — provavelmente o legítimo) e deleta os demais. Respeita --dry-run.
+#
+# Uso interno: chamado por main() quando CLEANUP_DUPLICATES=true.
+bs_cleanup_duplicate_books() {
+  local api_base="${BOOKSTACK_URL%/}/api"
+
+  log_info "=== Limpeza de books duplicados ==="
+  log_info "Nomes monitorados: 'ADRs', 'Procedimentos Técnicos'"
+
+  # ── Coletar todos os books via paginação por offset ─────────────────────────
+  local all_books_tmp
+  all_books_tmp=$(mktemp /tmp/bs_all_books_$$.XXXXXX.json)
+  printf '[]' > "$all_books_tmp"
+
+  local page_size=500
+  local offset=0
+  local batch_count=0
+  local http_errors=0
+
+  log_info "Coletando todos os books com paginação (page_size=${page_size})..."
+
+  while true; do
+    local batch
+    batch=$(bs_get "${api_base}/books?count=${page_size}&offset=${offset}" || true)
+
+    if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
+      log_error "Falha ao listar books (offset=${offset}) — HTTP ${BS_LAST_HTTP_CODE}"
+      http_errors=$((http_errors + 1))
+      break
+    fi
+
+    batch_count=$(echo "$batch" | jq '(.data // []) | length' 2>/dev/null || echo "0")
+    batch_count="${batch_count:-0}"
+
+    log_verbose "Batch offset=${offset}: ${batch_count} book(s) recebidos"
+
+    [[ "$batch_count" -eq 0 ]] && break
+
+    local merged
+    merged=$(jq -s '.[0] + (.[1].data // [])' \
+      "$all_books_tmp" \
+      <(echo "$batch") 2>/dev/null || true)
+
+    if [[ -z "$merged" ]]; then
+      log_error "Falha ao mesclar batch de books (offset=${offset}) — abortando paginação"
+      http_errors=$((http_errors + 1))
+      break
+    fi
+
+    printf '%s' "$merged" > "$all_books_tmp"
+    offset=$((offset + page_size))
+    [[ "$batch_count" -lt "$page_size" ]] && break
+  done
+
+  if [[ "$http_errors" -gt 0 ]]; then
+    log_error "Erros durante a coleta de books — abortando limpeza de books"
+    rm -f "$all_books_tmp"
+    return 1
+  fi
+
+  local total_collected
+  total_collected=$(jq 'length' "$all_books_tmp" 2>/dev/null || echo "0")
+  log_info "Total de books coletados: ${total_collected}"
+
+  # ── Processar cada nome monitorado ──────────────────────────────────────────
+  local -a monitored_names=("ADRs" "Procedimentos Técnicos")
+  local grand_found=0
+  local grand_deleted=0
+  local grand_errors=0
+
+  local book_name
+  for book_name in "${monitored_names[@]}"; do
+
+    # Filtrar localmente por nome exato
+    local matched_tmp
+    matched_tmp=$(mktemp /tmp/bs_matched_books_$$.XXXXXX.json)
+
+    jq --arg name "$book_name" '[.[] | select(.name == $name)]' \
+      "$all_books_tmp" > "$matched_tmp" 2>/dev/null || printf '[]' > "$matched_tmp"
+
+    local total_name
+    total_name=$(jq 'length' "$matched_tmp" 2>/dev/null || echo "0")
+    total_name="${total_name:-0}"
+
+    log_info "Books com nome '${book_name}': ${total_name} encontrado(s)"
+
+    if [[ "$total_name" -le 1 ]]; then
+      log_info "  → Sem duplicatas para '${book_name}'"
+      rm -f "$matched_tmp"
+      continue
+    fi
+
+    # Ordenar por id crescente; manter o de menor id (índice 0), deletar os demais
+    local candidates_books
+    candidates_books=$(jq -r '
+      sort_by(.id)
+      | .[1:]
+      | .[]
+      | [(.id | tostring), .name, (.slug // "")]
+      | @tsv
+    ' "$matched_tmp" 2>/dev/null || true)
+
+    rm -f "$matched_tmp"
+
+    if [[ -z "$candidates_books" ]]; then
+      log_info "  → Nenhuma duplicata detectada para '${book_name}'"
+      continue
+    fi
+
+    local count_name
+    count_name=$(echo "$candidates_books" | wc -l | tr -d ' ')
+    grand_found=$((grand_found + count_name))
+
+    log_info "  → ${count_name} duplicata(s) a remover para '${book_name}'"
+
+    while IFS=$'\t' read -r dup_id dup_name dup_slug; do
+      [[ -z "$dup_id" ]] && continue
+
+      if [[ "$DRY_RUN" == "true" ]]; then
+        log_dryrun "Removeria book id=${dup_id} '${dup_name}' (slug=${dup_slug})"
+      else
+        log_info "Removendo book id=${dup_id} '${dup_name}' (slug=${dup_slug})"
+        bs_delete "${api_base}/books/${dup_id}" || true
+
+        if [[ "$BS_LAST_HTTP_CODE" == "204" ]] || [[ "$BS_LAST_HTTP_CODE" == "200" ]]; then
+          log_update "Book id=${dup_id} removido com sucesso"
+          grand_deleted=$((grand_deleted + 1))
+        else
+          log_error "Falha ao remover book id=${dup_id} — HTTP ${BS_LAST_HTTP_CODE}"
+          grand_errors=$((grand_errors + 1))
+        fi
+      fi
+    done <<< "$candidates_books"
+  done
+
+  rm -f "$all_books_tmp"
+
+  # ── Resumo ──────────────────────────────────────────────────────────────────
+  echo ""
+  echo "╔══════════════════════════════════════════════════════╗"
+  printf  "║      Limpeza de Books Duplicados — Resumo            ║\n"
+  echo "╠══════════════════════════════════════════════════════╣"
+  printf  "║  Modo                  :  %-27s║\n" "$( [[ "$DRY_RUN" == "true" ]] && echo "DRY-RUN" || echo "EXECUTADO" )"
+  printf  "║  Books totais coletados:  %-27s║\n" "$total_collected"
+  printf  "║  Duplicatas detectadas :  %-27s║\n" "$grand_found"
+  if [[ "$DRY_RUN" == "false" ]]; then
+    printf  "║  Removidos             :  %-27s║\n" "$grand_deleted"
+    printf  "║  Erros na remoção      :  %-27s║\n" "$grand_errors"
+  fi
+  echo "╚══════════════════════════════════════════════════════╝"
+
+  if [[ "$grand_errors" -gt 0 ]]; then
+    return 1
+  fi
+  return 0
+}
+
 # =============================================================================
 # CLEANUP
 # =============================================================================
@@ -1723,7 +1939,8 @@ main() {
     detect_project_root
     # Passa "false" para não criar estrutura BookStack durante o cleanup
     validate_config "false"
-    bs_cleanup_duplicates "Procedimento Técnico"
+    bs_cleanup_duplicates "Procedimentos Técnicos"
+    bs_cleanup_duplicate_books
     exit $?
   fi
 
