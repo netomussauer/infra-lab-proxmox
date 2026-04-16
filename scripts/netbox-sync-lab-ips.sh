@@ -395,6 +395,61 @@ nb_patch() {
 }
 
 # =============================================================================
+# OPERAÇÕES NETBOX — TAGS
+# =============================================================================
+
+# nb_ensure_tags
+# Garante que todas as tags em NB_TAGS existem no NetBox.
+# Cria as ausentes; pula as existentes silenciosamente. Idempotente.
+nb_ensure_tags() {
+  local api_base="${NETBOX_URL%/}/api"
+
+  # Extrair slugs do JSON global NB_TAGS
+  local slugs
+  slugs=$(echo "$NB_TAGS" | jq -r '.[].slug')
+
+  local tag_slug
+  while IFS= read -r tag_slug; do
+    [[ -z "$tag_slug" ]] && continue
+
+    # Verificar se a tag já existe
+    local response
+    response=$(nb_get "${api_base}/extras/tags/?slug=${tag_slug}&limit=1")
+
+    if [[ "$NB_LAST_HTTP_CODE" != "200" ]]; then
+      log_warn "Não foi possível consultar tag '${tag_slug}' — HTTP ${NB_LAST_HTTP_CODE}"
+      continue
+    fi
+
+    local count
+    count=$(echo "$response" | jq -r '.count // 0')
+
+    if [[ "$count" -ge 1 ]]; then
+      log_skip "Tag '${tag_slug}' já existe no NetBox"
+      continue
+    fi
+
+    # Tag não existe — criar
+    if [[ "$DRY_RUN" == "true" ]]; then
+      log_dryrun "Criaria tag '${tag_slug}'"
+      continue
+    fi
+
+    local body
+    body=$(jq -n --arg slug "$tag_slug" --arg name "$tag_slug" \
+      '{ name: $name, slug: $slug, color: "9e9e9e" }')
+
+    nb_post "${api_base}/extras/tags/" "$body" > /dev/null
+
+    if [[ "$NB_LAST_HTTP_CODE" == "201" ]]; then
+      log_new "Tag '${tag_slug}' criada no NetBox"
+    else
+      log_warn "Não foi possível criar tag '${tag_slug}' — HTTP ${NB_LAST_HTTP_CODE} ($(cat "${NB_RESPONSE_TMP}" 2>/dev/null | jq -r '.detail // empty' || true))"
+    fi
+  done <<< "$slugs"
+}
+
+# =============================================================================
 # OPERAÇÕES NETBOX — PREFIXOS
 # =============================================================================
 
@@ -446,11 +501,14 @@ nb_ensure_prefix() {
     return 0
   fi
 
-  local create_response
-  create_response=$(nb_post "${api_base}/ipam/prefixes/" "$body")
+  nb_post "${api_base}/ipam/prefixes/" "$body" > /dev/null
 
   if [[ "$NB_LAST_HTTP_CODE" == "201" ]]; then
     log_new "Prefixo ${cidr} criado no NetBox (\"${description}\")"
+  elif [[ "$NB_LAST_HTTP_CODE" == "400" ]] && \
+       grep -q "already exists\|duplicate\|unique" "${NB_RESPONSE_TMP}" 2>/dev/null; then
+    # Condição de corrida: prefixo criado entre o GET e o POST — tratar como skip
+    log_skip "Prefixo ${cidr} já existe no NetBox (criado concorrentemente)"
   else
     log_error "Falha ao criar prefixo ${cidr} — HTTP ${NB_LAST_HTTP_CODE}"
     log_error "Body: $(cat "${NB_RESPONSE_TMP}" 2>/dev/null || true)"
@@ -522,12 +580,16 @@ nb_create_ip() {
     return 0
   fi
 
-  local response
-  response=$(nb_post "${api_base}/ipam/ip-addresses/" "$body")
+  nb_post "${api_base}/ipam/ip-addresses/" "$body" > /dev/null
 
   if [[ "$NB_LAST_HTTP_CODE" == "201" ]]; then
     log_new "IP ${ip}/32 criado (dns_name=${hostname})"
     COUNT_NEW=$((COUNT_NEW + 1))
+  elif [[ "$NB_LAST_HTTP_CODE" == "400" ]] && \
+       grep -q "already exists\|duplicate\|unique" "${NB_RESPONSE_TMP}" 2>/dev/null; then
+    # Condição de corrida: IP criado entre o GET e o POST — tratar como skip
+    log_skip "IP ${ip}/32 já existe no NetBox (criado concorrentemente)"
+    COUNT_SKIP=$((COUNT_SKIP + 1))
   else
     log_error "Falha ao criar IP ${ip}/32 — HTTP ${NB_LAST_HTTP_CODE}"
     log_error "Body: $(cat "${NB_RESPONSE_TMP}" 2>/dev/null || true)"
@@ -844,6 +906,10 @@ validate_config() {
   fi
 
   log_info "API do NetBox acessível (HTTP 200)"
+
+  # Garantir que as tags do laboratório existem antes de qualquer operação
+  log_info "Verificando/criando tags do laboratório no NetBox..."
+  nb_ensure_tags
 }
 
 # =============================================================================
