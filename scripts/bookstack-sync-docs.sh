@@ -601,17 +601,19 @@ bs_ensure_shelf() {
     return 0
   fi
 
-  # Verificar conflito — tratar como skip
-  if [[ "$BS_LAST_HTTP_CODE" == "409" ]] || \
-     grep -qi "already exists\|unique\|duplicate" "${BS_RESPONSE_TMP}" 2>/dev/null; then
-    log_skip "Shelf '${name}' já existe (conflict) — buscando novamente"
-    existing_id=$(bs_find_shelf "$name")
-    SHELF_IDS["$name"]="${existing_id:-0}"
-    echo "${existing_id:-0}"
+  # Qualquer código diferente de 200/201 (409, 422, 500, ...): tentar encontrar
+  # novamente antes de declarar erro — cobre falsos negativos do bs_find_shelf
+  # e respostas de conflito com corpo não padronizado (422 em vez de 409).
+  log_warn "POST shelf '${name}' retornou HTTP ${BS_LAST_HTTP_CODE} — verificando se já existe"
+  existing_id=$(bs_find_shelf "$name")
+  if [[ -n "$existing_id" ]]; then
+    log_skip "Shelf '${name}' já existe (id=${existing_id}) — usando existente"
+    SHELF_IDS["$name"]="$existing_id"
+    echo "$existing_id"
     return 0
   fi
 
-  log_error "Falha ao criar shelf '${name}' — HTTP ${BS_LAST_HTTP_CODE}"
+  log_error "Falha ao criar/encontrar shelf '${name}' — HTTP ${BS_LAST_HTTP_CODE}"
   echo ""
   return 1
 }
@@ -675,26 +677,34 @@ bs_ensure_book() {
     log_skip "Book '${name}' já existe (id=${existing_id})"
     BOOK_IDS["$name"]="$existing_id"
     # Associar ao shelf mesmo que o book já exista (idempotente)
-    # Faz GET do shelf antes de PUT para preservar os books já associados
+    # Faz GET do shelf antes de PUT para preservar os books já associados.
+    # Se o GET falhar, pula a associação — evita substituir books por array vazio.
     if [[ "$DRY_RUN" == "false" ]] && [[ "$shelf_id" != "0" ]]; then
       local book_id_to_add="$existing_id"
       local shelf_response
       shelf_response=$(bs_get "${api_base}/shelves/${shelf_id}" || true)
-      local current_books_ids
-      current_books_ids=$(echo "$shelf_response" | jq -r '[(.books // [])[] | .id]' 2>/dev/null || echo "[]")
-      local already_linked
-      already_linked=$(echo "$current_books_ids" | jq --arg bid "$book_id_to_add" 'map(tostring) | index($bid)' 2>/dev/null)
-      if [[ "$already_linked" == "null" ]]; then
-        local merged_books
-        merged_books=$(echo "$current_books_ids" | jq --arg bid "$book_id_to_add" '. + [($bid | tonumber)]')
-        local shelf_name_val
-        shelf_name_val=$(echo "$shelf_response" | jq -r '.name // ""')
-        local shelf_body
-        shelf_body=$(jq -n \
-          --arg name "$shelf_name_val" \
-          --argjson books "$merged_books" \
-          '{ name: $name, books: $books }')
-        bs_put "${api_base}/shelves/${shelf_id}" "$shelf_body" > /dev/null || true
+      if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
+        log_warn "Não foi possível verificar books do shelf id=${shelf_id} (HTTP ${BS_LAST_HTTP_CODE}) — pulando associação"
+      else
+        local current_books_ids
+        current_books_ids=$(echo "$shelf_response" | jq -r '[(.books // [])[] | .id]' 2>/dev/null || echo "[]")
+        local already_linked
+        already_linked=$(echo "$current_books_ids" | jq --arg bid "$book_id_to_add" 'map(tostring) | index($bid)' 2>/dev/null)
+        if [[ "$already_linked" == "null" ]]; then
+          local merged_books
+          merged_books=$(echo "$current_books_ids" | jq --arg bid "$book_id_to_add" '. + [($bid | tonumber)]')
+          local shelf_name_val
+          shelf_name_val=$(echo "$shelf_response" | jq -r '.name // ""')
+          local shelf_body
+          shelf_body=$(jq -n \
+            --arg name "$shelf_name_val" \
+            --argjson books "$merged_books" \
+            '{ name: $name, books: $books }')
+          bs_put "${api_base}/shelves/${shelf_id}" "$shelf_body" > /dev/null || true
+          log_info "Book '${name}' vinculado ao shelf '${shelf_name_val}' (id=${shelf_id})"
+        else
+          log_skip "Book '${name}' já está vinculado ao shelf id=${shelf_id} — nenhuma ação"
+        fi
       fi
     fi
     echo "$existing_id"
@@ -721,26 +731,34 @@ bs_ensure_book() {
     log_new "Book '${name}' criado (id=${new_id})"
     BOOK_IDS["$name"]="$new_id"
 
-    # Associar ao shelf preservando os books já associados
+    # Associar ao shelf preservando os books já associados.
+    # Se o GET falhar, pula a associação — evita substituir books por array vazio.
     if [[ "$shelf_id" != "0" ]]; then
       local book_id_to_add="$new_id"
       local shelf_response
       shelf_response=$(bs_get "${api_base}/shelves/${shelf_id}" || true)
-      local current_books_ids
-      current_books_ids=$(echo "$shelf_response" | jq -r '[(.books // [])[] | .id]' 2>/dev/null || echo "[]")
-      local already_linked
-      already_linked=$(echo "$current_books_ids" | jq --arg bid "$book_id_to_add" 'map(tostring) | index($bid)' 2>/dev/null)
-      if [[ "$already_linked" == "null" ]]; then
-        local merged_books
-        merged_books=$(echo "$current_books_ids" | jq --arg bid "$book_id_to_add" '. + [($bid | tonumber)]')
-        local shelf_name_val
-        shelf_name_val=$(echo "$shelf_response" | jq -r '.name // ""')
-        local shelf_body
-        shelf_body=$(jq -n \
-          --arg name "$shelf_name_val" \
-          --argjson books "$merged_books" \
-          '{ name: $name, books: $books }')
-        bs_put "${api_base}/shelves/${shelf_id}" "$shelf_body" > /dev/null || true
+      if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
+        log_warn "Não foi possível verificar books do shelf id=${shelf_id} (HTTP ${BS_LAST_HTTP_CODE}) — pulando associação"
+      else
+        local current_books_ids
+        current_books_ids=$(echo "$shelf_response" | jq -r '[(.books // [])[] | .id]' 2>/dev/null || echo "[]")
+        local already_linked
+        already_linked=$(echo "$current_books_ids" | jq --arg bid "$book_id_to_add" 'map(tostring) | index($bid)' 2>/dev/null)
+        if [[ "$already_linked" == "null" ]]; then
+          local merged_books
+          merged_books=$(echo "$current_books_ids" | jq --arg bid "$book_id_to_add" '. + [($bid | tonumber)]')
+          local shelf_name_val
+          shelf_name_val=$(echo "$shelf_response" | jq -r '.name // ""')
+          local shelf_body
+          shelf_body=$(jq -n \
+            --arg name "$shelf_name_val" \
+            --argjson books "$merged_books" \
+            '{ name: $name, books: $books }')
+          bs_put "${api_base}/shelves/${shelf_id}" "$shelf_body" > /dev/null || true
+          log_info "Book '${name}' vinculado ao shelf '${shelf_name_val}' (id=${shelf_id})"
+        else
+          log_skip "Book '${name}' já está vinculado ao shelf id=${shelf_id} — nenhuma ação"
+        fi
       fi
     fi
 
@@ -1360,25 +1378,62 @@ sync_file() {
   fi
   log_verbose "${rel_path}: content size = ${#content} bytes"
 
-  # ── Decidir ação: UPDATE ou NEW ──────────────────────────────────────────
+  # Base URL da API — usada nas chamadas bs_get/bs_update_page dentro de sync_file
+  local api_base="${BOOKSTACK_URL%/}/api"
 
-  # Caso 1: page_id existe no state → UPDATE
+  # ── Decidir ação: UPDATE ou NEW ──────────────────────────────────────────
+  # Fluxo de decisão:
+  #   Caso 1 (page_id no state, hash mudou ou force):
+  #     → GET /pages/{id}: 404/000 → limpar id, cair no Caso 2
+  #     → GET 200, página vazia → forçar UPDATE
+  #     → GET 200, conteúdo presente → UPDATE normal
+  #   Caso 2 (sem page_id no state):
+  #     → bs_find_page_in_book: não encontrou → NEW (bs_create_page)
+  #     → encontrou:
+  #         GET /pages/{id}: página vazia → UPDATE
+  #         hash idêntico e não force → SKIP (atualiza só state)
+  #         hash diferente ou force → UPDATE
+
+  # Caso 1: page_id existe no state → verificar se ainda existe no BookStack e UPDATE
+  # Se a página sumiu (404/000), limpa stored_page_id e cai no Caso 2 (recriação).
   if [[ -n "$stored_page_id" ]] && [[ "$stored_page_id" != "null" ]] && \
      [[ "$stored_page_id" != "0" ]]; then
 
-    if [[ "$DRY_RUN" == "true" ]]; then
-      log_dryrun "Atualizaria page id=${stored_page_id} '${book_title}' (${rel_path})"
-      COUNT_UPDATE=$((COUNT_UPDATE + 1))
-      return 0
-    fi
+    # Verificar se a página ainda existe no BookStack antes de tentar atualizar
+    local check_response
+    check_response=$(bs_get "${api_base}/pages/${stored_page_id}" || true)
+    if [[ "$BS_LAST_HTTP_CODE" == "404" ]] || [[ "$BS_LAST_HTTP_CODE" == "000" ]]; then
+      log_warn "Page id=${stored_page_id} não encontrada no BookStack (HTTP ${BS_LAST_HTTP_CODE}) — será recriada"
+      stored_page_id=""
+      # cai para o Caso 2 abaixo
+    elif [[ "$BS_LAST_HTTP_CODE" == "200" ]]; then
+      # Página existe — verificar se está vazia (pode forçar atualização mesmo com hash igual)
+      local bs_md bs_html
+      bs_md=$(echo "$check_response" | jq -r '.markdown // ""' 2>/dev/null || echo "")
+      bs_html=$(echo "$check_response" | jq -r '.raw_html // .html // ""' 2>/dev/null || echo "")
+      if [[ -z "$bs_md" ]] && [[ -z "$bs_html" ]]; then
+        log_info "Page id=${stored_page_id} '${book_title}' existe mas está vazia — forçando atualização"
+      fi
+      # prossegue com bs_update_page normalmente
 
-    if bs_update_page "$stored_page_id" "$book_title" "$content"; then
-      log_update "Page id=${stored_page_id} '${book_title}' atualizada (${rel_path})"
-      COUNT_UPDATE=$((COUNT_UPDATE + 1))
-      state_update "$rel_path" "$current_hash" "$stored_page_id" \
-        "$book_id" "$book_title"
+      if [[ "$DRY_RUN" == "true" ]]; then
+        log_dryrun "Atualizaria page id=${stored_page_id} '${book_title}' (${rel_path})"
+        COUNT_UPDATE=$((COUNT_UPDATE + 1))
+        return 0
+      fi
+
+      if bs_update_page "$stored_page_id" "$book_title" "$content"; then
+        log_update "Page id=${stored_page_id} '${book_title}' atualizada (${rel_path})"
+        COUNT_UPDATE=$((COUNT_UPDATE + 1))
+        state_update "$rel_path" "$current_hash" "$stored_page_id" \
+          "$book_id" "$book_title"
+      else
+        log_warn "Falha ao atualizar page id=${stored_page_id} — tentando criar nova"
+        stored_page_id=""
+      fi
     else
-      log_warn "Falha ao atualizar page id=${stored_page_id} — tentando criar nova"
+      # GET retornou outro código (ex: 500) — não atualizar; cai no Caso 2
+      log_warn "GET page id=${stored_page_id} retornou HTTP ${BS_LAST_HTTP_CODE} — será recriada"
       stored_page_id=""
     fi
   fi
@@ -1394,23 +1449,51 @@ sync_file() {
     fi
 
     if [[ -n "$existing_id" ]]; then
-      # Existe no BookStack mas não no state → associar e atualizar
-      log_info "Page '${book_title}' encontrada no BookStack (id=${existing_id}) — atualizando"
+      # Existe no BookStack mas não no state — verificar conteúdo atual antes de atualizar.
+      # Fluxo: SKIP se conteúdo presente e hash idêntico; UPDATE se vazio, hash diferente ou force.
+      local page_response
+      page_response=$(bs_get "${api_base}/pages/${existing_id}" || true)
 
-      if [[ "$DRY_RUN" == "true" ]]; then
-        log_dryrun "Atualizaria page id=${existing_id} '${book_title}' (${rel_path})"
-        COUNT_UPDATE=$((COUNT_UPDATE + 1))
+      local current_bs_markdown current_bs_html
+      current_bs_markdown=$(echo "$page_response" | jq -r '.markdown // ""' 2>/dev/null || echo "")
+      current_bs_html=$(echo "$page_response" | jq -r '.raw_html // .html // ""' 2>/dev/null || echo "")
+
+      local page_is_empty=false
+      if [[ -z "$current_bs_markdown" ]] && [[ -z "$current_bs_html" ]]; then
+        page_is_empty=true
+      fi
+
+      # Determinar se atualização é necessária
+      local needs_update=false
+      if [[ "$page_is_empty" == "true" ]]; then
+        log_info "Page '${book_title}' existe mas está vazia — atualizando (${rel_path})"
+        needs_update=true
+      elif [[ "$FORCE" == "true" ]] || [[ "$stored_hash" != "$current_hash" ]]; then
+        log_info "Page '${book_title}' existe — conteúdo desatualizado, atualizando (${rel_path})"
+        needs_update=true
+      else
+        log_skip "${rel_path} → página já existe com conteúdo e hash idêntico"
+        COUNT_SKIP=$((COUNT_SKIP + 1))
+        state_update "$rel_path" "$current_hash" "$existing_id" "$book_id" "$book_title"
         return 0
       fi
 
-      if bs_update_page "$existing_id" "$book_title" "$content"; then
-        log_update "Page id=${existing_id} '${book_title}' atualizada (${rel_path})"
-        COUNT_UPDATE=$((COUNT_UPDATE + 1))
-        state_update "$rel_path" "$current_hash" "$existing_id" \
-          "$book_id" "$book_title"
-      else
-        log_error "Falha ao atualizar page id=${existing_id} '${book_title}'"
-        COUNT_ERRORS=$((COUNT_ERRORS + 1))
+      if [[ "$needs_update" == "true" ]]; then
+        if [[ "$DRY_RUN" == "true" ]]; then
+          log_dryrun "Atualizaria page id=${existing_id} '${book_title}' (${rel_path})"
+          COUNT_UPDATE=$((COUNT_UPDATE + 1))
+          return 0
+        fi
+
+        if bs_update_page "$existing_id" "$book_title" "$content"; then
+          log_update "Page id=${existing_id} '${book_title}' atualizada (${rel_path})"
+          COUNT_UPDATE=$((COUNT_UPDATE + 1))
+          state_update "$rel_path" "$current_hash" "$existing_id" \
+            "$book_id" "$book_title"
+        else
+          log_error "Falha ao atualizar page id=${existing_id} '${book_title}'"
+          COUNT_ERRORS=$((COUNT_ERRORS + 1))
+        fi
       fi
 
     else
