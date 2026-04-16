@@ -369,6 +369,7 @@ check_deps() {
 
 # bs_delete URL
 # Executa DELETE. Retorna HTTP code em BS_LAST_HTTP_CODE.
+# Retorna 1 se curl falhar ou se o HTTP code não for 2xx/204.
 bs_delete() {
   local url="$1"
 
@@ -382,9 +383,19 @@ bs_delete() {
     log_error "curl falhou ao executar DELETE ${url}"
     BS_LAST_HTTP_CODE="000"
     echo "{}" > "${BS_RESPONSE_TMP}"
+    return 1
   }
 
   log_verbose "HTTP ${BS_LAST_HTTP_CODE} <- DELETE ${url}"
+
+  # Validar código HTTP
+  if [[ "${BS_LAST_HTTP_CODE}" != 2* ]]; then
+    log_error "DELETE ${url} retornou HTTP ${BS_LAST_HTTP_CODE} (esperado 2xx/204)"
+    log_error "Body bruto: $(head -c 500 "${BS_RESPONSE_TMP}" 2>/dev/null || true)"
+    return 1
+  fi
+
+  return 0
 }
 
 # =============================================================================
@@ -403,7 +414,9 @@ _build_bs_base_args() {
 }
 
 # bs_get URL
-# Executa GET. Retorna body em stdout; HTTP code em BS_LAST_HTTP_CODE.
+# Executa GET. Retorna body em stdout se HTTP 2xx; HTTP code em BS_LAST_HTTP_CODE.
+# Se o HTTP code não for 2xx, imprime o body bruto como erro e retorna 1 sem
+# emitir o body para stdout, evitando que jq receba HTML ou mensagens de erro.
 bs_get() {
   local url="$1"
 
@@ -416,9 +429,19 @@ bs_get() {
     log_error "curl falhou ao executar GET ${url}"
     BS_LAST_HTTP_CODE="000"
     echo "{}" > "${BS_RESPONSE_TMP}"
+    return 1
   }
 
   log_verbose "HTTP ${BS_LAST_HTTP_CODE} <- GET ${url}"
+
+  # Validar código HTTP antes de retornar o body
+  if [[ "${BS_LAST_HTTP_CODE}" != 2* ]]; then
+    log_error "GET ${url} retornou HTTP ${BS_LAST_HTTP_CODE} (esperado 2xx)"
+    log_error "Body bruto: $(head -c 500 "${BS_RESPONSE_TMP}" 2>/dev/null || true)"
+    echo "{}" > "${BS_RESPONSE_TMP}"
+    return 1
+  fi
+
   if [[ "$VERBOSE" == "true" ]]; then
     local preview
     preview=$(jq -c '.' "${BS_RESPONSE_TMP}" 2>/dev/null | head -c 300 || true)
@@ -500,7 +523,7 @@ bs_find_shelf() {
   name_encoded=$(printf '%s' "$name" | sed 's/ /%20/g; s/|/%7C/g')
 
   local response
-  response=$(bs_get "${api_base}/shelves?filter[name]=${name_encoded}&count=1")
+  response=$(bs_get "${api_base}/shelves?filter[name]=${name_encoded}&count=1" || true)
 
   if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
     log_warn "Falha ao buscar shelf '${name}' — HTTP ${BS_LAST_HTTP_CODE}"
@@ -586,7 +609,7 @@ bs_find_book() {
   name_encoded=$(printf '%s' "$name" | sed 's/ /%20/g; s/|/%7C/g')
 
   local response
-  response=$(bs_get "${api_base}/books?filter[name]=${name_encoded}&count=1")
+  response=$(bs_get "${api_base}/books?filter[name]=${name_encoded}&count=1" || true)
 
   if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
     log_warn "Falha ao buscar book '${name}' — HTTP ${BS_LAST_HTTP_CODE}"
@@ -687,7 +710,7 @@ bs_find_chapter() {
   name_encoded=$(printf '%s' "$name" | sed 's/ /%20/g; s/|/%7C/g; s/-/%2D/g')
 
   local response
-  response=$(bs_get "${api_base}/chapters?filter[name]=${name_encoded}&filter[book_id]=${book_id}&count=10")
+  response=$(bs_get "${api_base}/chapters?filter[name]=${name_encoded}&filter[book_id]=${book_id}&count=10" || true)
 
   if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
     log_warn "Falha ao buscar chapter '${name}' (book_id=${book_id}) — HTTP ${BS_LAST_HTTP_CODE}"
@@ -777,7 +800,7 @@ bs_find_page() {
   name_encoded=$(printf '%s' "$name" | sed 's/ /%20/g; s/|/%7C/g')
 
   local response
-  response=$(bs_get "${api_base}/pages?filter[name]=${name_encoded}&filter[chapter_id]=${chapter_id}&count=10")
+  response=$(bs_get "${api_base}/pages?filter[name]=${name_encoded}&filter[chapter_id]=${chapter_id}&count=10" || true)
 
   if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
     log_warn "Falha ao buscar page '${name}' (chapter_id=${chapter_id}) — HTTP ${BS_LAST_HTTP_CODE}"
@@ -1375,6 +1398,8 @@ scan_and_sync() {
 # =============================================================================
 
 validate_config() {
+  local build_structure="${1:-true}"
+
   if [[ -z "$BOOKSTACK_URL" ]]; then
     log_error "BOOKSTACK_URL não definida. Use --url ou export BOOKSTACK_URL=..."
     exit 1
@@ -1390,6 +1415,9 @@ validate_config() {
     exit 1
   fi
 
+  # Normalizar BOOKSTACK_URL: remover trailing slash
+  BOOKSTACK_URL="${BOOKSTACK_URL%/}"
+
   # Mascarar secret nos logs (primeiros 4 chars + ...)
   local secret_masked
   if [[ "${#BOOKSTACK_TOKEN_SECRET}" -gt 4 ]]; then
@@ -1398,7 +1426,7 @@ validate_config() {
     secret_masked="***"
   fi
 
-  # Montar array global BS_BASE_ARGS
+  # Montar array global BS_BASE_ARGS — deve ocorrer antes de qualquer chamada bs_*
   _build_bs_base_args
 
   log_info "BookStack URL  : ${BOOKSTACK_URL}"
@@ -1421,7 +1449,7 @@ validate_config() {
 
   # Testar conectividade com a API do BookStack
   log_info "Testando conectividade com a API do BookStack..."
-  local api_base="${BOOKSTACK_URL%/}/api"
+  local api_base="${BOOKSTACK_URL}/api"
 
   BS_LAST_HTTP_CODE=""
   bs_get "${api_base}/books" > /dev/null || true
@@ -1434,8 +1462,10 @@ validate_config() {
 
   log_info "API do BookStack acessível (HTTP 200)"
 
-  # Garantir estrutura completa
-  bs_ensure_structure
+  # Garantir estrutura completa (apenas no fluxo de sincronização, não no cleanup)
+  if [[ "$build_structure" == "true" ]]; then
+    bs_ensure_structure
+  fi
 }
 
 # =============================================================================
@@ -1499,13 +1529,13 @@ bs_cleanup_duplicates() {
   # URL-encode o nome da página para o filtro (espaços → %20, ç → %C3%A7, etc.)
   local name_encoded
   name_encoded=$(printf '%s' "$page_name" | \
-    python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.stdin.read()))" \
+    python3 -c "import sys, urllib.parse; sys.stdout.write(urllib.parse.quote(sys.stdin.read().rstrip('\n')))" \
     2>/dev/null \
     || printf '%s' "$page_name" | sed 's/ /%20/g; s/ç/%C3%A7/g; s/é/%C3%A9/g; s/ê/%C3%AA/g; s/ã/%C3%A3/g; s/â/%C3%A2/g; s/ó/%C3%B3/g; s/í/%C3%AD/g; s/á/%C3%A1/g; s/ú/%C3%BA/g')
 
   # Buscar todas as páginas com esse nome (até 500 resultados)
   local response
-  response=$(bs_get "${api_base}/pages?filter[name]=${name_encoded}&count=500")
+  response=$(bs_get "${api_base}/pages?filter[name]=${name_encoded}&count=500" || true)
 
   if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
     log_error "Falha ao listar páginas — HTTP ${BS_LAST_HTTP_CODE}"
@@ -1513,8 +1543,10 @@ bs_cleanup_duplicates() {
   fi
 
   # Extrair total de resultados encontrados
+  # Protege contra .data ausente ou null com // 0
   local total
-  total=$(echo "$response" | jq '.data | length' 2>/dev/null || echo "0")
+  total=$(echo "$response" | jq '(.data // []) | length' 2>/dev/null || echo "0")
+  total="${total:-0}"
 
   if [[ "$total" -eq 0 ]]; then
     log_info "Nenhuma página encontrada com o nome '${page_name}' — nada a fazer"
@@ -1525,12 +1557,13 @@ bs_cleanup_duplicates() {
 
   # Agrupar por chapter_id: para cada grupo, manter a mais recente (maior updated_at)
   # e coletar as demais como candidatas à remoção.
-  # Produz JSON: array de objetos { id, name, chapter_id, updated_at, book_id }
+  # Protege campos numéricos com // 0 e strings com // "" para evitar
+  # "Invalid numeric literal" caso o servidor retorne null nesses campos.
   local candidates
   candidates=$(echo "$response" | jq -r '
-    [.data[] | {
-      id: .id,
-      name: .name,
+    [(.data // [])[] | select(.id != null) | {
+      id: (.id // 0),
+      name: (.name // ""),
       chapter_id: (.chapter_id // 0),
       book_id: (.book_id // 0),
       updated_at: (.updated_at // "1970-01-01T00:00:00.000000Z")
@@ -1544,7 +1577,7 @@ bs_cleanup_duplicates() {
       )
     | flatten
     | .[]
-    | [.id, .name, (.chapter_id | tostring), (.book_id | tostring), .updated_at]
+    | [(.id | tostring), .name, (.chapter_id | tostring), (.book_id | tostring), .updated_at]
     | @tsv
   ' 2>/dev/null || true)
 
@@ -1571,7 +1604,7 @@ bs_cleanup_duplicates() {
       log_dryrun "Removeria page id=${dup_id} '${dup_name}' (chapter_id=${dup_chapter_id}, updated_at=${dup_updated_at})"
     else
       log_info "Removendo page id=${dup_id} '${dup_name}' (chapter_id=${dup_chapter_id}, updated_at=${dup_updated_at})"
-      bs_delete "${api_base}/pages/${dup_id}"
+      bs_delete "${api_base}/pages/${dup_id}" || true
 
       if [[ "$BS_LAST_HTTP_CODE" == "204" ]] || [[ "$BS_LAST_HTTP_CODE" == "200" ]]; then
         log_update "Page id=${dup_id} removida com sucesso"
@@ -1628,13 +1661,15 @@ main() {
   # Modo de limpeza de duplicatas — executa e sai sem sincronizar
   if [[ "$CLEANUP_DUPLICATES" == "true" ]]; then
     detect_project_root
-    validate_config
+    # Passa "false" para não criar estrutura BookStack durante o cleanup
+    validate_config "false"
     bs_cleanup_duplicates "Procedimento Técnico"
     exit $?
   fi
 
   detect_project_root
-  validate_config
+  # Passa "true" (padrão) para garantir estrutura BookStack antes de sincronizar
+  validate_config "true"
   load_state
 
   echo ""
