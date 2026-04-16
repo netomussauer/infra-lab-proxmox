@@ -82,6 +82,7 @@ VERBOSE=false
 FORCE=false
 STATE_FILE=""
 PROJECT_ROOT=""
+CLEANUP_DUPLICATES=false
 
 # Array global de argumentos curl — populado por _build_bs_base_args
 declare -a BS_BASE_ARGS=()
@@ -207,6 +208,10 @@ Opções:
   -f, --force                Forçar re-publicação mesmo sem alterações (ignora state)
       --state-file PATH      Caminho do state file (padrão: scripts/.bookstack-sync-state.json)
       --project-root PATH    Raiz do projeto (padrão: detectada automaticamente)
+      --cleanup-duplicates   Remove pages duplicadas chamadas "Procedimento Técnico"
+                             (mantém apenas a mais recente por updated_at). Requer
+                             --url e credenciais configuradas. Combine com -n para
+                             dry-run (apenas listar, sem deletar).
   -h, --help                 Exibir este help
 
 Estrutura BookStack criada:
@@ -237,6 +242,12 @@ Exemplos:
 
   # Forçar re-publicação de tudo
   ./${SCRIPT_NAME} --force --url https://10.10.0.6:8080
+
+  # Listar duplicatas sem remover (dry-run)
+  ./${SCRIPT_NAME} --cleanup-duplicates -n --url https://10.10.0.6:8080
+
+  # Remover páginas duplicadas "Procedimento Técnico"
+  ./${SCRIPT_NAME} --cleanup-duplicates --url https://10.10.0.6:8080
 EOF
 }
 
@@ -304,6 +315,10 @@ parse_args() {
         PROJECT_ROOT="${2:?'--project-root requer um valor'}"
         shift 2
         ;;
+      --cleanup-duplicates)
+        CLEANUP_DUPLICATES=true
+        shift
+        ;;
       -h|--help)
         print_help
         exit 0
@@ -349,8 +364,31 @@ check_deps() {
 }
 
 # =============================================================================
-# WRAPPERS DA API BOOKSTACK
+# WRAPPERS DA API BOOKSTACK — DELETE
 # =============================================================================
+
+# bs_delete URL
+# Executa DELETE. Retorna HTTP code em BS_LAST_HTTP_CODE.
+bs_delete() {
+  local url="$1"
+
+  log_verbose "DELETE ${url}"
+
+  BS_LAST_HTTP_CODE=$(curl "${BS_BASE_ARGS[@]}" \
+    -o "${BS_RESPONSE_TMP}" \
+    -w "%{http_code}" \
+    -X DELETE \
+    "${url}" 2>/dev/null) || {
+    log_error "curl falhou ao executar DELETE ${url}"
+    BS_LAST_HTTP_CODE="000"
+    echo "{}" > "${BS_RESPONSE_TMP}"
+  }
+
+  log_verbose "HTTP ${BS_LAST_HTTP_CODE} <- DELETE ${url}"
+}
+
+# =============================================================================
+# WRAPPERS DA API BOOKSTACK
 
 # Popula o array global BS_BASE_ARGS com as opções comuns a todas as chamadas.
 # Usar array global evita o padrão printf+mapfile que fragmenta headers no Bash.
@@ -586,7 +624,7 @@ bs_ensure_book() {
     # Associar ao shelf mesmo que o book já exista (idempotente)
     if [[ "$DRY_RUN" == "false" ]] && [[ "$shelf_id" != "0" ]]; then
       local shelf_body
-      shelf_body=$(jq -n --argjson bid "$existing_id" '{ books: [$bid] }')
+      shelf_body=$(jq -n --arg bid "$existing_id" '{ books: [($bid | tonumber)] }')
       bs_put "${api_base}/shelves/${shelf_id}" "$shelf_body" > /dev/null || true
     fi
     echo "$existing_id"
@@ -616,7 +654,7 @@ bs_ensure_book() {
     # Associar ao shelf
     if [[ "$shelf_id" != "0" ]]; then
       local shelf_body
-      shelf_body=$(jq -n --argjson bid "$new_id" '{ books: [$bid] }')
+      shelf_body=$(jq -n --arg bid "$new_id" '{ books: [($bid | tonumber)] }')
       bs_put "${api_base}/shelves/${shelf_id}" "$shelf_body" > /dev/null || true
     fi
 
@@ -659,8 +697,8 @@ bs_find_chapter() {
 
   local found_id
   found_id=$(echo "$response" | jq -r \
-    --arg n "$name" --argjson bid "$book_id" \
-    '.data[] | select(.name == $n and .book_id == $bid) | .id' 2>/dev/null | head -1 || true)
+    --arg n "$name" --arg bid "$book_id" \
+    '.data[] | select(.name == $n and (.book_id | tostring) == $bid) | .id' 2>/dev/null | head -1 || true)
 
   echo "${found_id:-}"
 }
@@ -699,8 +737,8 @@ bs_ensure_chapter() {
   fi
 
   local body
-  body=$(jq -n --arg name "$name" --arg desc "$description" --argjson bid "$book_id" \
-    '{ book_id: $bid, name: $name, description: $desc }')
+  body=$(jq -n --arg name "$name" --arg desc "$description" --arg bid "$book_id" \
+    '{ book_id: ($bid | tonumber), name: $name, description: $desc }')
 
   local response
   response=$(bs_post "${api_base}/chapters" "$body")
@@ -749,8 +787,8 @@ bs_find_page() {
 
   local found_id
   found_id=$(echo "$response" | jq -r \
-    --arg n "$name" --argjson cid "$chapter_id" \
-    '.data[] | select(.name == $n and .chapter_id == $cid) | .id' 2>/dev/null | head -1 || true)
+    --arg n "$name" --arg cid "$chapter_id" \
+    '.data[] | select(.name == $n and (.chapter_id | tostring) == $cid) | .id' 2>/dev/null | head -1 || true)
 
   echo "${found_id:-}"
 }
@@ -766,11 +804,11 @@ bs_create_page() {
 
   local body
   body=$(jq -n \
-    --argjson bid "$book_id" \
-    --argjson cid "$chapter_id" \
+    --arg bid "$book_id" \
+    --arg cid "$chapter_id" \
     --arg name "$name" \
     --arg md "$markdown_content" \
-    '{ book_id: $bid, chapter_id: $cid, name: $name, markdown: $md }')
+    '{ book_id: ($bid | tonumber), chapter_id: ($cid | tonumber), name: $name, markdown: $md }')
 
   local response
   response=$(bs_post "${api_base}/pages" "$body")
@@ -1025,16 +1063,16 @@ state_update() {
   STATE_JSON=$(echo "$STATE_JSON" | jq \
     --arg p "$rel_path" \
     --arg h "$hash" \
-    --argjson pid "$page_id" \
-    --argjson bid "$book_id" \
-    --argjson cid "$chapter_id" \
+    --arg pid "$page_id" \
+    --arg bid "$book_id" \
+    --arg cid "$chapter_id" \
     --arg pname "$page_name" \
     --arg ts "$now" \
     '.files[$p] = {
       hash: $h,
-      page_id: $pid,
-      book_id: $bid,
-      chapter_id: $cid,
+      page_id: ($pid | tonumber),
+      book_id: ($bid | tonumber),
+      chapter_id: ($cid | tonumber),
       page_name: $pname,
       last_updated: $ts
     }')
@@ -1442,6 +1480,129 @@ detect_project_root() {
 }
 
 # =============================================================================
+# LIMPEZA DE PÁGINAS DUPLICADAS
+# =============================================================================
+
+# bs_cleanup_duplicates
+# Consulta todas as pages com o nome "Procedimento Técnico" (ou qualquer
+# nome passado via $1), mantém apenas a mais recente por updated_at e
+# deleta as demais. Respeita --dry-run.
+#
+# Uso interno: chamado por main() quando CLEANUP_DUPLICATES=true.
+bs_cleanup_duplicates() {
+  local page_name="${1:-Procedimento Técnico}"
+  local api_base="${BOOKSTACK_URL%/}/api"
+
+  log_info "=== Limpeza de páginas duplicadas ==="
+  log_info "Buscando páginas com nome: '${page_name}'"
+
+  # URL-encode o nome da página para o filtro (espaços → %20, ç → %C3%A7, etc.)
+  local name_encoded
+  name_encoded=$(printf '%s' "$page_name" | \
+    python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.stdin.read()))" \
+    2>/dev/null \
+    || printf '%s' "$page_name" | sed 's/ /%20/g; s/ç/%C3%A7/g; s/é/%C3%A9/g; s/ê/%C3%AA/g; s/ã/%C3%A3/g; s/â/%C3%A2/g; s/ó/%C3%B3/g; s/í/%C3%AD/g; s/á/%C3%A1/g; s/ú/%C3%BA/g')
+
+  # Buscar todas as páginas com esse nome (até 500 resultados)
+  local response
+  response=$(bs_get "${api_base}/pages?filter[name]=${name_encoded}&count=500")
+
+  if [[ "$BS_LAST_HTTP_CODE" != "200" ]]; then
+    log_error "Falha ao listar páginas — HTTP ${BS_LAST_HTTP_CODE}"
+    return 1
+  fi
+
+  # Extrair total de resultados encontrados
+  local total
+  total=$(echo "$response" | jq '.data | length' 2>/dev/null || echo "0")
+
+  if [[ "$total" -eq 0 ]]; then
+    log_info "Nenhuma página encontrada com o nome '${page_name}' — nada a fazer"
+    return 0
+  fi
+
+  log_info "Encontradas ${total} página(s) com esse nome"
+
+  # Agrupar por chapter_id: para cada grupo, manter a mais recente (maior updated_at)
+  # e coletar as demais como candidatas à remoção.
+  # Produz JSON: array de objetos { id, name, chapter_id, updated_at, book_id }
+  local candidates
+  candidates=$(echo "$response" | jq -r '
+    [.data[] | {
+      id: .id,
+      name: .name,
+      chapter_id: (.chapter_id // 0),
+      book_id: (.book_id // 0),
+      updated_at: (.updated_at // "1970-01-01T00:00:00.000000Z")
+    }]
+    | group_by(.chapter_id)
+    | map(
+        sort_by(.updated_at) | reverse |
+        if length > 1 then .[1:]   # remove o mais recente (índice 0), retorna os demais
+        else empty
+        end
+      )
+    | flatten
+    | .[]
+    | [.id, .name, (.chapter_id | tostring), (.book_id | tostring), .updated_at]
+    | @tsv
+  ' 2>/dev/null || true)
+
+  if [[ -z "$candidates" ]]; then
+    log_info "Nenhuma duplicata encontrada — todas as ${total} página(s) são únicas por chapter"
+    return 0
+  fi
+
+  local count_found=0
+  local count_deleted=0
+  local count_errors=0
+
+  # Contar candidatos antes de iterar (para o resumo)
+  count_found=$(echo "$candidates" | wc -l | tr -d ' ')
+
+  log_info "Duplicatas encontradas: ${count_found} página(s) serão removidas"
+  echo ""
+
+  # Iterar sobre cada candidato
+  while IFS=$'\t' read -r dup_id dup_name dup_chapter_id dup_book_id dup_updated_at; do
+    [[ -z "$dup_id" ]] && continue
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+      log_dryrun "Removeria page id=${dup_id} '${dup_name}' (chapter_id=${dup_chapter_id}, updated_at=${dup_updated_at})"
+    else
+      log_info "Removendo page id=${dup_id} '${dup_name}' (chapter_id=${dup_chapter_id}, updated_at=${dup_updated_at})"
+      bs_delete "${api_base}/pages/${dup_id}"
+
+      if [[ "$BS_LAST_HTTP_CODE" == "204" ]] || [[ "$BS_LAST_HTTP_CODE" == "200" ]]; then
+        log_update "Page id=${dup_id} removida com sucesso"
+        count_deleted=$((count_deleted + 1))
+      else
+        log_error "Falha ao remover page id=${dup_id} — HTTP ${BS_LAST_HTTP_CODE}"
+        count_errors=$((count_errors + 1))
+      fi
+    fi
+  done <<< "$candidates"
+
+  echo ""
+  echo "╔══════════════════════════════════════════════════════╗"
+  printf  "║      Limpeza de Duplicatas — Resumo                  ║\n"
+  echo "╠══════════════════════════════════════════════════════╣"
+  printf  "║  Modo                  :  %-27s║\n" "$( [[ "$DRY_RUN" == "true" ]] && echo "DRY-RUN" || echo "EXECUTADO" )"
+  printf  "║  Total encontradas     :  %-27s║\n" "$total"
+  printf  "║  Duplicatas detectadas :  %-27s║\n" "$count_found"
+  if [[ "$DRY_RUN" == "false" ]]; then
+    printf  "║  Removidas             :  %-27s║\n" "$count_deleted"
+    printf  "║  Erros na remoção      :  %-27s║\n" "$count_errors"
+  fi
+  echo "╚══════════════════════════════════════════════════════╝"
+
+  if [[ "$count_errors" -gt 0 ]]; then
+    return 1
+  fi
+  return 0
+}
+
+# =============================================================================
 # CLEANUP
 # =============================================================================
 
@@ -1463,6 +1624,15 @@ main() {
 
   parse_args "$@"
   check_deps
+
+  # Modo de limpeza de duplicatas — executa e sai sem sincronizar
+  if [[ "$CLEANUP_DUPLICATES" == "true" ]]; then
+    detect_project_root
+    validate_config
+    bs_cleanup_duplicates "Procedimento Técnico"
+    exit $?
+  fi
+
   detect_project_root
   validate_config
   load_state
