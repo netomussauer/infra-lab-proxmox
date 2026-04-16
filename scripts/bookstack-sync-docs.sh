@@ -267,12 +267,12 @@ print_summary() {
   echo "+------------------------------------------------------+"
   echo "|      BookStack Sync -- Resumo da sincronizacao       |"
   echo "+------------------------------------------------------+"
-  printf  "|  Modo                  :  %-27s|\n" "$mode_label"
-  printf  "|  Arquivos processados  :  %-27s|\n" "$COUNT_FILES"
-  printf  "|  Pages novas (NEW)     :  %-27s|\n" "$COUNT_NEW"
-  printf  "|  Pages atualizadas     :  %-27s|\n" "$COUNT_UPDATE"
-  printf  "|  Pages sem alteracao   :  %-27s|\n" "$COUNT_SKIP"
-  printf  "|  Erros                 :  %-27s|\n" "$COUNT_ERRORS"
+  echo "|  Modo                  :  ${mode_label}"
+  echo "|  Arquivos processados  :  ${COUNT_FILES}"
+  echo "|  Pages novas (NEW)     :  ${COUNT_NEW}"
+  echo "|  Pages atualizadas     :  ${COUNT_UPDATE}"
+  echo "|  Pages sem alteracao   :  ${COUNT_SKIP}"
+  echo "|  Erros                 :  ${COUNT_ERRORS}"
   echo "+------------------------------------------------------+"
 }
 
@@ -1212,51 +1212,63 @@ file_to_page_content() {
   case "$ext" in
     md|MD)
       # Markdown: conteúdo direto
-      printf -- '%s' "$file_content"
+      printf '%s' "$file_content"
       ;;
     tf|hcl)
       # Terraform/HCL: envolve em bloco de código
-      printf '# %s\n\n' "$title"
-      printf '> Arquivo: `%s`  \n' "$rel_path"
-      printf '> Última atualização: %s  \n' "$now"
-      printf '> Gerenciado por: bookstack-sync-docs.sh\n\n'
-      printf '---\n\n'
-      printf '```hcl\n'
-      printf -- '%s\n' "$file_content"
-      printf '```\n'
+      echo "# ${title}"
+      echo ""
+      echo "> Arquivo: \`${rel_path}\`  "
+      echo "> Última atualização: ${now}  "
+      echo "> Gerenciado por: bookstack-sync-docs.sh"
+      echo ""
+      echo "---"
+      echo ""
+      echo '```hcl'
+      printf '%s\n' "$file_content"
+      echo '```'
       ;;
     yml|yaml|YAML|YML)
       # YAML: envolve em bloco de código
-      printf '# %s\n\n' "$title"
-      printf '> Arquivo: `%s`  \n' "$rel_path"
-      printf '> Última atualização: %s  \n' "$now"
-      printf '> Gerenciado por: bookstack-sync-docs.sh\n\n'
-      printf '---\n\n'
-      printf '```yaml\n'
-      printf -- '%s\n' "$file_content"
-      printf '```\n'
+      echo "# ${title}"
+      echo ""
+      echo "> Arquivo: \`${rel_path}\`  "
+      echo "> Última atualização: ${now}  "
+      echo "> Gerenciado por: bookstack-sync-docs.sh"
+      echo ""
+      echo "---"
+      echo ""
+      echo '```yaml'
+      printf '%s\n' "$file_content"
+      echo '```'
       ;;
     sh|bash)
       # Shell script: envolve em bloco de código
-      printf '# %s\n\n' "$title"
-      printf '> Arquivo: `%s`  \n' "$rel_path"
-      printf '> Última atualização: %s  \n' "$now"
-      printf '> Gerenciado por: bookstack-sync-docs.sh\n\n'
-      printf '---\n\n'
-      printf '```bash\n'
-      printf -- '%s\n' "$file_content"
-      printf '```\n'
+      echo "# ${title}"
+      echo ""
+      echo "> Arquivo: \`${rel_path}\`  "
+      echo "> Última atualização: ${now}  "
+      echo "> Gerenciado por: bookstack-sync-docs.sh"
+      echo ""
+      echo "---"
+      echo ""
+      echo '```bash'
+      printf '%s\n' "$file_content"
+      echo '```'
       ;;
     *)
       # Extensão desconhecida: envolve em bloco de código genérico
-      printf '# %s\n\n' "$title"
-      printf '> Arquivo: `%s`  \n' "$rel_path"
-      printf '> Última atualização: %s  \n' "$now"
-      printf '> Gerenciado por: bookstack-sync-docs.sh\n\n'
-      printf '---\n\n'
-      printf '```\n'
-      printf -- '%s\n' "$file_content"
-      printf '```\n'
+      echo "# ${title}"
+      echo ""
+      echo "> Arquivo: \`${rel_path}\`  "
+      echo "> Última atualização: ${now}  "
+      echo "> Gerenciado por: bookstack-sync-docs.sh"
+      echo ""
+      echo "---"
+      echo ""
+      echo '```'
+      printf '%s\n' "$file_content"
+      echo '```'
       ;;
   esac
 }
@@ -1585,7 +1597,7 @@ bs_cleanup_duplicates() {
   local all_pages_tmp
   all_pages_tmp=$(mktemp /tmp/bs_all_pages_$$.XXXXXX.json)
   # Inicializa com array vazio
-  printf '[]' > "$all_pages_tmp"
+  echo '[]' > "$all_pages_tmp"
 
   local page_size=500
   local offset=0
@@ -1647,7 +1659,7 @@ bs_cleanup_duplicates() {
   matched_tmp=$(mktemp /tmp/bs_matched_$$.XXXXXX.json)
 
   jq --arg name "$page_name" '[.[] | select(.name == $name)]' \
-    "$all_pages_tmp" > "$matched_tmp" 2>/dev/null || printf '[]' > "$matched_tmp"
+    "$all_pages_tmp" > "$matched_tmp" 2>/dev/null || echo '[]' > "$matched_tmp"
 
   rm -f "$all_pages_tmp"
 
@@ -1729,13 +1741,13 @@ bs_cleanup_duplicates() {
   echo "+------------------------------------------------------+"
   echo "|      Limpeza de Duplicatas -- Resumo                 |"
   echo "+------------------------------------------------------+"
-  printf  "|  Modo                  :  %-27s|\n" "$( [[ "$DRY_RUN" == "true" ]] && echo "DRY-RUN" || echo "EXECUTADO" )"
-  printf  "|  Total coletadas       :  %-27s|\n" "$total_collected"
-  printf  "|  Com nome correspondente: %-27s|\n" "$total"
-  printf  "|  Duplicatas detectadas :  %-27s|\n" "$count_found"
+  echo "|  Modo                  :  $( [[ "$DRY_RUN" == "true" ]] && echo "DRY-RUN" || echo "EXECUTADO" )"
+  echo "|  Total coletadas       :  ${total_collected}"
+  echo "|  Com nome correspondente: ${total}"
+  echo "|  Duplicatas detectadas :  ${count_found}"
   if [[ "$DRY_RUN" == "false" ]]; then
-    printf  "|  Removidas             :  %-27s|\n" "$count_deleted"
-    printf  "|  Erros na remocao      :  %-27s|\n" "$count_errors"
+    echo "|  Removidas             :  ${count_deleted}"
+    echo "|  Erros na remocao      :  ${count_errors}"
   fi
   echo "+------------------------------------------------------+"
 
@@ -1762,7 +1774,7 @@ bs_cleanup_duplicate_shelves() {
   # ── Coletar todos os shelves via paginação por offset ───────────────────────
   local all_shelves_tmp
   all_shelves_tmp=$(mktemp /tmp/bs_all_shelves_$$.XXXXXX.json)
-  printf '[]' > "$all_shelves_tmp"
+  echo '[]' > "$all_shelves_tmp"
 
   local page_size=500
   local offset=0
@@ -1827,7 +1839,7 @@ bs_cleanup_duplicate_shelves() {
     matched_tmp=$(mktemp /tmp/bs_matched_shelves_$$.XXXXXX.json)
 
     jq --arg name "$sname" '[.[] | select(.name == $name)]' \
-      "$all_shelves_tmp" > "$matched_tmp" 2>/dev/null || printf '[]' > "$matched_tmp"
+      "$all_shelves_tmp" > "$matched_tmp" 2>/dev/null || echo '[]' > "$matched_tmp"
 
     local total_name
     total_name=$(jq 'length' "$matched_tmp" 2>/dev/null || echo "0")
@@ -1890,12 +1902,12 @@ bs_cleanup_duplicate_shelves() {
   echo "+------------------------------------------------------+"
   echo "|      Limpeza de Shelves Duplicados -- Resumo         |"
   echo "+------------------------------------------------------+"
-  printf  "|  Modo                  :  %-27s|\n" "$( [[ "$DRY_RUN" == "true" ]] && echo "DRY-RUN" || echo "EXECUTADO" )"
-  printf  "|  Shelves totais colet. :  %-27s|\n" "$total_collected"
-  printf  "|  Duplicatas detectadas :  %-27s|\n" "$grand_found"
+  echo "|  Modo                  :  $( [[ "$DRY_RUN" == "true" ]] && echo "DRY-RUN" || echo "EXECUTADO" )"
+  echo "|  Shelves totais colet. :  ${total_collected}"
+  echo "|  Duplicatas detectadas :  ${grand_found}"
   if [[ "$DRY_RUN" == "false" ]]; then
-    printf  "|  Removidos             :  %-27s|\n" "$grand_deleted"
-    printf  "|  Erros na remocao      :  %-27s|\n" "$grand_errors"
+    echo "|  Removidos             :  ${grand_deleted}"
+    echo "|  Erros na remocao      :  ${grand_errors}"
   fi
   echo "+------------------------------------------------------+"
 
@@ -1939,7 +1951,7 @@ bs_cleanup_duplicate_books() {
   # ── Coletar todos os books via paginação por offset ─────────────────────────
   local all_books_tmp
   all_books_tmp=$(mktemp /tmp/bs_all_books_$$.XXXXXX.json)
-  printf '[]' > "$all_books_tmp"
+  echo '[]' > "$all_books_tmp"
 
   local page_size=500
   local offset=0
@@ -2004,7 +2016,7 @@ bs_cleanup_duplicate_books() {
     matched_tmp=$(mktemp /tmp/bs_matched_books_$$.XXXXXX.json)
 
     jq --arg name "$book_name" '[.[] | select(.name == $name)]' \
-      "$all_books_tmp" > "$matched_tmp" 2>/dev/null || printf '[]' > "$matched_tmp"
+      "$all_books_tmp" > "$matched_tmp" 2>/dev/null || echo '[]' > "$matched_tmp"
 
     local total_name
     total_name=$(jq 'length' "$matched_tmp" 2>/dev/null || echo "0")
@@ -2068,12 +2080,12 @@ bs_cleanup_duplicate_books() {
   echo "+------------------------------------------------------+"
   echo "|      Limpeza de Books Duplicados -- Resumo           |"
   echo "+------------------------------------------------------+"
-  printf  "|  Modo                  :  %-27s|\n" "$( [[ "$DRY_RUN" == "true" ]] && echo "DRY-RUN" || echo "EXECUTADO" )"
-  printf  "|  Books totais coletados:  %-27s|\n" "$total_collected"
-  printf  "|  Duplicatas detectadas :  %-27s|\n" "$grand_found"
+  echo "|  Modo                  :  $( [[ "$DRY_RUN" == "true" ]] && echo "DRY-RUN" || echo "EXECUTADO" )"
+  echo "|  Books totais coletados:  ${total_collected}"
+  echo "|  Duplicatas detectadas :  ${grand_found}"
   if [[ "$DRY_RUN" == "false" ]]; then
-    printf  "|  Removidos             :  %-27s|\n" "$grand_deleted"
-    printf  "|  Erros na remocao      :  %-27s|\n" "$grand_errors"
+    echo "|  Removidos             :  ${grand_deleted}"
+    echo "|  Erros na remocao      :  ${grand_errors}"
   fi
   echo "+------------------------------------------------------+"
 
