@@ -1,4 +1,4 @@
-# Proxmox Lab — Infraestrutura Local
+# Infraestrutura Proxmox — Referência de Acesso e Operação
 
 > Arquivo de referência para acesso e operação do ambiente Proxmox de laboratório em rede local.
 > Mantenha este arquivo atualizado sempre que houver mudanças no ambiente.
@@ -43,14 +43,13 @@
 | **Token secret** | Armazenado em variável de ambiente `PROXMOX_API_TOKEN_SECRET` |
 
 **Exemplo de autenticação via API Token:**
+
 ```bash
-# Variáveis de ambiente (carregar de ~/.env.proxmox ou vault)
 export PROXMOX_URL="https://<PROXMOX_IP>:8006/api2/json"
 export PROXMOX_USER="admin@pve"
 export PROXMOX_TOKEN_ID="admin@pve!terraform"
 export PROXMOX_TOKEN_SECRET="<TOKEN_SECRET>"
 
-# Teste de conectividade
 curl -sk \
   -H "Authorization: PVEAPIToken=${PROXMOX_TOKEN_ID}=${PROXMOX_TOKEN_SECRET}" \
   "${PROXMOX_URL}/version" | jq .
@@ -162,6 +161,7 @@ export PROXMOX_SSH_KEY="~/.ssh/id_ed25519_proxmox"
 ### Integrações com IaC
 
 **Terraform (`terraform/providers.tf`):**
+
 ```hcl
 terraform {
   required_providers {
@@ -185,6 +185,7 @@ provider "proxmox" {
 ```
 
 **Ansible (`ansible/inventory/lab.yml`):**
+
 ```yaml
 all:
   children:
@@ -247,8 +248,6 @@ ssh root@<PROXMOX_IP> qm start <VMID>
 ---
 
 ## Contexto para automações
-
-Ao executar qualquer automação neste ambiente, considere:
 
 | Parâmetro | Valor padrão |
 |-----------|-------------|
