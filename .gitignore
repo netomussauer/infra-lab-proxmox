@@ -36,6 +36,12 @@ id_rsa
 id_ed25519
 id_ed25519_proxmox
 
+# ── bookstack-sync ───────────────────────────────────────
+# Estado de execução do script (não é código nem config versionável)
+scripts/.bookstack-sync-state.json
+# Diretório residual gerado por engano (placeholder de path não substituído)
+/path/
+
 # ── Sistema ───────────────────────────────────────────────
 .DS_Store
 Thumbs.db
